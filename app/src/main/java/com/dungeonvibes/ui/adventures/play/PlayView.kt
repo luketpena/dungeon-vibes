@@ -1,0 +1,617 @@
+package com.dungeonvibes.ui.adventures.play
+
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.graphics.PathEffect
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dungeonvibes.R
+import com.dungeonvibes.data.db.FxTransition
+import com.dungeonvibes.data.db.SceneEntity
+import com.dungeonvibes.data.fx.FxItem
+import com.dungeonvibes.ui.common.SceneHaptic
+import com.dungeonvibes.ui.common.FxHaptic
+import com.dungeonvibes.ui.common.ConfirmDialog
+import com.dungeonvibes.ui.common.LocalOnLocalNetwork
+import com.dungeonvibes.ui.common.ScenePalette
+import com.dungeonvibes.ui.common.TopLevelScreen
+import com.dungeonvibes.ui.common.Swatch
+import com.dungeonvibes.ui.scenes.SceneListItem
+import com.dungeonvibes.ui.scenes.fx.fxSwatchColor
+import kotlinx.coroutines.launch
+import sh.calvin.reorderable.ReorderableItem
+import sh.calvin.reorderable.rememberReorderableLazyGridState
+
+/**
+ * An adventure at the table: scenes as big tiles, tap to apply. Edit mode reorders (long-press and
+ * drag), deletes and opens tiles in the editor instead; tiles never apply in edit mode.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun PlayView(
+    adventureId: Long,
+    showBack: Boolean,
+    onBack: () -> Unit,
+    onOpenEditor: (Long) -> Unit,
+) {
+    val viewModel = hiltViewModel<PlayViewModel, PlayViewModel.Factory>(key = "adventure-$adventureId") { factory ->
+        factory.create(adventureId)
+    }
+    val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val library by viewModel.libraryScenes.collectAsStateWithLifecycle()
+    val effectsRunning by viewModel.effectsRunning.collectAsStateWithLifecycle()
+    val fxList by viewModel.fx.collectAsStateWithLifecycle()
+    var showBoard by rememberSaveable(adventureId) { mutableStateOf(false) }
+    val onLocalNetwork = LocalOnLocalNetwork.current
+    val haptics = LocalHapticFeedback.current
+    val scope = rememberCoroutineScope()
+    val newSceneName = stringResource(R.string.scene_new_name)
+
+    KeepScreenOn()
+
+    var editMode by rememberSaveable(adventureId) { mutableStateOf(false) }
+    var showAddChoice by remember { mutableStateOf(false) }
+    var showLibraryPicker by remember { mutableStateOf(false) }
+    var pendingDelete by remember { mutableStateOf<SceneEntity?>(null) }
+
+    var ordered by remember { mutableStateOf(state.tiles) }
+    LaunchedEffect(state.tiles) { ordered = state.tiles }
+    val gridState = rememberLazyGridState()
+    val reorderState = rememberReorderableLazyGridState(gridState) { from, to ->
+        // Only tiles move (never onto the ghost tile, which comes after them).
+        if (from.index >= ordered.size || to.index >= ordered.size) return@rememberReorderableLazyGridState
+        ordered = ordered.toMutableList().apply { add(to.index, removeAt(from.index)) }
+        haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
+    }
+
+    TopLevelScreen(
+        title = state.adventureName,
+        // Beside an open list (tablets) the list pane carries the lights menu.
+        lightsMenu = showBack,
+        navigationIcon = {
+            if (showBack) {
+                IconButton(onClick = onBack) {
+                    Icon(painterResource(R.drawable.ic_back), contentDescription = stringResource(R.string.action_back))
+                }
+            }
+        },
+        actions = {
+            if (state.tiles.isNotEmpty() && !editMode) {
+                IconButton(onClick = { showBoard = !showBoard }) {
+                    Icon(painterResource(R.drawable.ic_fx), contentDescription = stringResource(R.string.fx_board))
+                }
+            }
+            if (state.tiles.isNotEmpty()) {
+                IconButton(onClick = { editMode = !editMode }) {
+                    Icon(
+                        painterResource(if (editMode) R.drawable.ic_check else R.drawable.ic_edit),
+                        contentDescription = stringResource(if (editMode) R.string.play_done_editing else R.string.play_edit),
+                    )
+                }
+            }
+        },
+        floatingActionButton = {
+            if (editMode || (state.isLoaded && state.tiles.isEmpty() && !state.isMissing)) {
+                ExtendedFloatingActionButton(
+                    onClick = { showAddChoice = true },
+                    icon = { Icon(painterResource(R.drawable.ic_add), contentDescription = null) },
+                    text = { Text(stringResource(R.string.play_add_scene)) },
+                )
+            }
+        },
+    ) { modifier ->
+        if (!state.isLoaded) return@TopLevelScreen
+        if (state.isMissing) {
+            CenteredMessage(stringResource(R.string.adventure_missing), modifier)
+            return@TopLevelScreen
+        }
+        if (ordered.isEmpty()) {
+            CenteredMessage(stringResource(R.string.play_empty), modifier)
+            return@TopLevelScreen
+        }
+        // A library scene an FX moved into, when this adventure has no copy of it: a ghost tile.
+        val activeId = state.activeSceneId
+        val ghost = if (state.activeFromFx && activeId != null && ordered.none { it.scene.id == activeId || it.scene.parentSceneId == activeId }) {
+            library.firstOrNull { it.scene.id == activeId }
+        } else {
+            null
+        }
+        val fireFx: (FxItem) -> Unit = { item ->
+            haptics.performHapticFeedback(FxHaptic)
+            viewModel.fireFx(item)
+        }
+        val fxEnabled: (FxItem) -> Boolean = { item -> onLocalNetwork && canFire(item, hasActive = activeId != null) }
+        BoxWithConstraints(modifier) {
+            // Wide windows keep the board beside the tiles; phones open it as a sheet.
+            val wide = maxWidth >= BOARD_SIDE_MIN_WIDTH
+            Row(Modifier.fillMaxSize()) {
+                Column(Modifier.weight(1f)) {
+                    if (effectsRunning && !editMode) EffectsRunningBar(onStop = viewModel::stopEffects)
+                    if (editMode) {
+                        Text(
+                            stringResource(R.string.play_edit_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                        )
+                    }
+                    LazyVerticalGrid(
+                        columns = GridCells.Adaptive(minSize = 160.dp),
+                        state = gridState,
+                        contentPadding = PaddingValues(start = 12.dp, end = 12.dp, top = 12.dp, bottom = 96.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp),
+                        modifier = Modifier.fillMaxSize(),
+                    ) {
+                        items(ordered, key = { it.scene.id }) { tile ->
+                            ReorderableItem(reorderState, key = tile.scene.id, enabled = editMode) { isDragging ->
+                                val sceneId = tile.scene.id
+                                SceneTile(
+                                    tile = tile,
+                                    isActive = sceneId == state.activeSceneId,
+                                    failedSlotIds = if (sceneId == state.activeSceneId) state.failedSlotIds else emptySet(),
+                                    editMode = editMode,
+                                    isDragging = isDragging,
+                                    canApply = onLocalNetwork,
+                                    onClick = {
+                                        if (editMode) {
+                                            onOpenEditor(sceneId)
+                                        } else if (onLocalNetwork) {
+                                            haptics.performHapticFeedback(SceneHaptic)
+                                            viewModel.play(sceneId)
+                                        }
+                                    },
+                                    onDelete = { pendingDelete = tile.scene },
+                                    modifier = if (editMode) {
+                                        Modifier.longPressDraggableHandle(
+                                            onDragStarted = { haptics.performHapticFeedback(HapticFeedbackType.GestureThresholdActivate) },
+                                            onDragStopped = {
+                                                haptics.performHapticFeedback(HapticFeedbackType.GestureEnd)
+                                                viewModel.reorder(ordered.map { it.scene.id })
+                                            },
+                                        )
+                                    } else {
+                                        Modifier
+                                    },
+                                )
+                            }
+                        }
+                        if (ghost != null) {
+                            item(key = "ghost") {
+                                GhostTile(
+                                    item = ghost,
+                                    editMode = editMode,
+                                    canApply = onLocalNetwork,
+                                    onClick = {
+                                        if (!editMode && onLocalNetwork) {
+                                            haptics.performHapticFeedback(SceneHaptic)
+                                            viewModel.playGhost(ghost.scene.id)
+                                        }
+                                    },
+                                    onAdd = { viewModel.addFromLibrary(listOf(ghost.scene.id)) },
+                                )
+                            }
+                        }
+                    }
+                }
+                if (wide && showBoard && !editMode) {
+                    FxBoard(
+                        fx = fxList,
+                        enabled = fxEnabled,
+                        showReturnHint = activeId == null,
+                        onFire = fireFx,
+                        modifier = Modifier.width(BOARD_SIDE_WIDTH).fillMaxHeight(),
+                    )
+                }
+            }
+            if (!wide && showBoard && !editMode) {
+                ModalBottomSheet(onDismissRequest = { showBoard = false }) {
+                    FxBoard(
+                        fx = fxList,
+                        enabled = fxEnabled,
+                        showReturnHint = activeId == null,
+                        onFire = fireFx,
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp),
+                    )
+                }
+            }
+        }
+    }
+
+    if (showAddChoice) {
+        AddSceneChoiceDialog(
+            hasLibraryScenes = library.isNotEmpty(),
+            onBlank = {
+                showAddChoice = false
+                scope.launch { viewModel.addBlankScene(newSceneName)?.let(onOpenEditor) }
+            },
+            onFromLibrary = {
+                showAddChoice = false
+                showLibraryPicker = true
+            },
+            onDismiss = { showAddChoice = false },
+        )
+    }
+    if (showLibraryPicker) {
+        LibraryPickerDialog(
+            library = library,
+            onAdd = { ids ->
+                viewModel.addFromLibrary(ids)
+                showLibraryPicker = false
+            },
+            onDismiss = { showLibraryPicker = false },
+        )
+    }
+    pendingDelete?.let { scene ->
+        ConfirmDialog(
+            title = stringResource(R.string.scene_delete_title, scene.name),
+            message = stringResource(R.string.play_delete_message),
+            confirmLabel = stringResource(R.string.action_delete),
+            onConfirm = {
+                viewModel.deleteScene(scene.id)
+                pendingDelete = null
+            },
+            onDismiss = { pendingDelete = null },
+        )
+    }
+}
+
+/** Wide windows (tablets) show the FX board beside the tiles. */
+private val BOARD_SIDE_MIN_WIDTH = 720.dp
+private val BOARD_SIDE_WIDTH = 240.dp
+
+/**
+ * Whether an FX can fire: it needs bulbs, and one that returns needs a scene to return to
+ * (a Scene transition without its scene counts as Return).
+ */
+private fun canFire(item: FxItem, hasActive: Boolean): Boolean {
+    if (item.hasNoTargets) return false
+    val fx = item.fx
+    val returns = fx.transition == FxTransition.RETURN || (fx.transition == FxTransition.SCENE && fx.transitionSceneId == null)
+    return hasActive || !returns
+}
+
+/** The FX board: one button per FX in the library, in library order; tap fires. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun FxBoard(
+    fx: List<FxItem>,
+    enabled: (FxItem) -> Boolean,
+    showReturnHint: Boolean,
+    onFire: (FxItem) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(color = MaterialTheme.colorScheme.surfaceContainer, modifier = modifier) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(12.dp)) {
+            Text(stringResource(R.string.fx_board), style = MaterialTheme.typography.titleMedium)
+            if (fx.isEmpty()) {
+                Text(
+                    stringResource(R.string.fx_board_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+                return@Column
+            }
+            if (showReturnHint) {
+                Text(
+                    stringResource(R.string.fx_board_return_hint),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 4.dp),
+                )
+            }
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.padding(top = 8.dp),
+            ) {
+                for (item in fx) {
+                    FilledTonalButton(
+                        onClick = { onFire(item) },
+                        enabled = enabled(item),
+                        contentPadding = PaddingValues(start = 12.dp, end = 16.dp),
+                    ) {
+                        Swatch(fxSwatchColor(item.fx), 18.dp)
+                        Spacer(Modifier.width(8.dp))
+                        Text(item.fx.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+            }
+        }
+    }
+}
+
+/**
+ * A library scene an FX moved into, not in this adventure: a dotted outline in the grid. Tapping
+ * plays it again; in edit mode it can be added to the adventure (a normal copy).
+ */
+@Composable
+private fun GhostTile(
+    item: SceneListItem,
+    editMode: Boolean,
+    canApply: Boolean,
+    onClick: () -> Unit,
+    onAdd: () -> Unit,
+) {
+    val outline = MaterialTheme.colorScheme.primary
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp)
+            .alpha(if (!editMode && !canApply) 0.5f else 1f)
+            .drawBehind {
+                val corner = 12.dp.toPx()
+                drawRoundRect(
+                    color = outline,
+                    cornerRadius = CornerRadius(corner, corner),
+                    style = Stroke(width = 2.dp.toPx(), pathEffect = PathEffect.dashPathEffect(floatArrayOf(14f, 10f))),
+                )
+            }
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        Column {
+            Text(item.scene.name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                stringResource(R.string.play_ghost_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.heightIn(min = 12.dp))
+            ScenePalette(item.swatches, size = 20.dp)
+            if (editMode) {
+                TextButton(onClick = onAdd, modifier = Modifier.padding(top = 4.dp)) {
+                    Text(stringResource(R.string.play_ghost_add))
+                }
+            } else {
+                Text(
+                    stringResource(R.string.play_active),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = outline,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+/** Shows that effects are animating the bulbs, with a way to stop them (they settle on the scene). */
+@Composable
+private fun EffectsRunningBar(onStop: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.secondaryContainer, modifier = Modifier.fillMaxWidth()) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+        ) {
+            Text(
+                stringResource(R.string.play_effects_running),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = onStop) { Text(stringResource(R.string.play_stop_effects)) }
+        }
+    }
+}
+
+/** Keeps the display on while this is on screen (the GM shouldn't have to wake the phone mid-scene). */
+@Composable
+private fun KeepScreenOn() {
+    val view = LocalView.current
+    DisposableEffect(view) {
+        view.keepScreenOn = true
+        onDispose { view.keepScreenOn = false }
+    }
+}
+
+@Composable
+private fun SceneTile(
+    tile: PlayTile,
+    isActive: Boolean,
+    failedSlotIds: Set<Long>,
+    editMode: Boolean,
+    isDragging: Boolean,
+    canApply: Boolean,
+    onClick: () -> Unit,
+    onDelete: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val elevation by animateDpAsState(if (isDragging) 8.dp else 1.dp, label = "tileElevation")
+    val colors = MaterialTheme.colorScheme
+    val dimmed = !editMode && !canApply
+    Card(
+        onClick = onClick,
+        modifier = modifier
+            .fillMaxWidth()
+            .heightIn(min = 120.dp)
+            .alpha(if (dimmed) 0.5f else 1f),
+        // Active: a solid primary fill with its own "on" color for everything on it, so the name,
+        // icons and the ✦ stay readable (a light container with primary-colored text didn't).
+        colors = CardDefaults.cardColors(
+            containerColor = if (isActive) colors.primary else colors.surfaceContainerHigh,
+            contentColor = if (isActive) colors.onPrimary else colors.onSurface,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
+    ) {
+        Column(Modifier.padding(12.dp)) {
+            Row(verticalAlignment = Alignment.Top) {
+                Text(
+                    tile.scene.name,
+                    style = MaterialTheme.typography.titleMedium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (editMode) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(32.dp)) {
+                        Icon(painterResource(R.drawable.ic_delete), contentDescription = stringResource(R.string.action_delete))
+                    }
+                }
+            }
+            Spacer(Modifier.weight(1f, fill = false).heightIn(min = 12.dp))
+            ScenePalette(tile.swatches, size = 20.dp, failedSlotIds = failedSlotIds)
+            if (isActive) {
+                Text(
+                    stringResource(if (failedSlotIds.isEmpty()) R.string.play_active else R.string.play_active_with_problems),
+                    style = MaterialTheme.typography.labelMedium,
+                    modifier = Modifier.padding(top = 8.dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CenteredMessage(text: String, modifier: Modifier) {
+    Box(modifier.fillMaxSize().padding(24.dp), contentAlignment = Alignment.Center) {
+        Text(
+            text,
+            style = MaterialTheme.typography.bodyLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+@Composable
+private fun AddSceneChoiceDialog(
+    hasLibraryScenes: Boolean,
+    onBlank: () -> Unit,
+    onFromLibrary: () -> Unit,
+    onDismiss: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.play_add_scene)) },
+        text = {
+            Column {
+                TextButton(onClick = onBlank, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.play_add_blank), modifier = Modifier.fillMaxWidth())
+                }
+                TextButton(onClick = onFromLibrary, enabled = hasLibraryScenes, modifier = Modifier.fillMaxWidth()) {
+                    Text(stringResource(R.string.play_add_from_library), modifier = Modifier.fillMaxWidth())
+                }
+                if (!hasLibraryScenes) {
+                    Text(
+                        stringResource(R.string.play_library_empty),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 12.dp),
+                    )
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
+}
+
+/** Pick several library scenes at once; each is added as its own copy, in library order. */
+@Composable
+private fun LibraryPickerDialog(
+    library: List<SceneListItem>,
+    onAdd: (List<Long>) -> Unit,
+    onDismiss: () -> Unit,
+) {
+    var selected by remember { mutableStateOf(emptySet<Long>()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.play_add_from_library)) },
+        text = {
+            Column(
+                Modifier
+                    .heightIn(max = 400.dp)
+                    .verticalScroll(rememberScrollState()),
+            ) {
+                for (item in library) {
+                    val id = item.scene.id
+                    val checked = id in selected
+                    val toggle = { selected = if (checked) selected - id else selected + id }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = toggle),
+                    ) {
+                        Checkbox(checked = checked, onCheckedChange = { toggle() })
+                        Column {
+                            Text(item.scene.name, style = MaterialTheme.typography.bodyLarge)
+                            ScenePalette(
+                                item.swatches,
+                                modifier = Modifier.padding(top = 2.dp, bottom = 4.dp),
+                            )
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onAdd(library.mapNotNull { if (it.scene.id in selected) it.scene.id else null }) },
+                enabled = selected.isNotEmpty(),
+            ) { Text(stringResource(R.string.play_add_selected, selected.size)) }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) } },
+    )
+}
