@@ -7,6 +7,7 @@ import com.dungeonvibes.data.db.ColorShiftSettings
 import com.dungeonvibes.data.db.FlashSettings
 import com.dungeonvibes.data.db.FxColor
 import com.dungeonvibes.data.db.LightMode
+import com.dungeonvibes.data.db.SpinSettings
 import com.dungeonvibes.data.db.Spread
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.light.LightState
@@ -36,7 +37,7 @@ object EffectTiming {
      */
     const val FRAME_TRANSITION_MS = 300L
 
-    /** Shortest color step, brightness step or pulse gap, so a zero setting can't spin forever. */
+    /** Shortest color or brightness step, so a zero setting can't spin forever. */
     const val MIN_STEP_MS = 50
 
     /** Shortest gap between flashes or bursts. */
@@ -170,6 +171,10 @@ internal class ColorShiftTimeline(
 ) {
     private val count = palette.size
     private val randomOrder = settings.order == ColorOrder.RANDOM
+    private val pingPong = settings.order == ColorOrder.PING_PONG
+
+    /** Ping-pong: +1 walking up the palette, -1 walking back down. */
+    private var direction = 1
     private var from: Int
     private var to: Int
     private var stepStart = 0L
@@ -215,6 +220,11 @@ internal class ColorShiftTimeline(
     /** In sequence loops; random never repeats the color it's on. */
     private fun nextIndex(current: Int): Int {
         if (count < 2) return current
+        if (pingPong) {
+            // Turn round at either end: 1, 2, 3, 2, 1, 2…
+            if (current + direction !in 0 until count) direction = -direction
+            return current + direction
+        }
         if (!randomOrder) return if (current + 1 == count) 0 else current + 1
         val pick = random.nextInt(count - 1)
         return if (pick >= current) pick + 1 else pick
@@ -283,17 +293,27 @@ internal class BrightnessTimeline(
 }
 
 /**
- * Flashes: bursts of Attack-Hold-Release pulses separated by random gaps. Each pulse picks its
- * peak from the peak range; in a burst of two or more, one random pulse reaches the top.
+ * Flashes: Attack-Hold-Release pulses separated by random gaps. Single: one pulse per flash with
+ * the layer's Attack, Hold and Release, its peak picked from the peak range. Flicker: a burst of
+ * 2–3 pulses only a few milliseconds apart: faint echoes at 10–20 % strength, then the main
+ * strike last, at the top of the range (owner request: the strike always ends the burst, so its
+ * long fade is the one you see; the echoes are texture). Flicker pulses snap on and hold briefly
+ * at a fixed speed; the echoes die away fast and the strike fades out over the layer's Release
+ * (owner request: the Attack and Hold settings are for Single only).
  */
 internal class FlashTimeline(
     private val settings: FlashSettings,
     private val random: Random,
 ) {
-    private val attack = settings.attackMs.coerceAtLeast(0)
-    private val hold = settings.holdMs.coerceAtLeast(0)
-    private val release = settings.releaseMs.coerceAtLeast(0)
-    private val pulseLength = attack + hold + release
+    private val flicker = settings.flicker
+    private val userRelease = settings.releaseMs.coerceAtLeast(0)
+
+    // The current pulse's envelope: the layer's settings for Single, fixed for Flicker (see
+    // pickPulse); set before any pulse plays.
+    private var attack = if (flicker) 0 else settings.attackMs.coerceAtLeast(0)
+    private var hold = if (flicker) FLICKER_HOLD_MS else settings.holdMs.coerceAtLeast(0)
+    private var release = userRelease
+    private var pulseLength = attack + hold + release
 
     private val peakHigh = maxOf(settings.peak, settings.peakMin).coerceIn(0f, 1f)
     private val peakLow = minOf(settings.peak, settings.peakMin).coerceIn(0f, 1f)
@@ -302,8 +322,16 @@ internal class FlashTimeline(
     private var burstSize = 1
     private var pulseIndex = 0
 
-    /** The pulse in this burst that reaches [peakHigh]; -1 for a single flash. */
+    /** The pulse in this burst that reaches [peakHigh] (always the last); -1 for a single flash. */
     private var strongPulse = -1
+
+    /**
+     * How far the current pulse goes toward its color and peak: 1 for a single flash or a
+     * Flicker's main pulse, a fraction for its faint echoes. Scales the envelope rather than the
+     * peak, so an echo always lifts the light a little and never dims a bright scene.
+     */
+    var strength = 1f
+        private set
 
     /** Counts pulses; changes whenever a new pulse becomes the current one. */
     var serial = 0L
@@ -330,9 +358,8 @@ internal class FlashTimeline(
             }
             if (pulseIndex + 1 < burstSize) {
                 pulseIndex++
-                peak = pickPeak()
-                pulseStart = end + random.between(settings.spacingMinMs, settings.spacingMaxMs)
-                    .coerceAtLeast(EffectTiming.MIN_STEP_MS)
+                pickPulse()
+                pulseStart = end + random.between(FLICKER_SPACING_MIN_MS, FLICKER_SPACING_MAX_MS)
             } else {
                 startBurst()
                 pulseStart = end + gap()
@@ -386,27 +413,136 @@ internal class FlashTimeline(
     private fun gap(): Int =
         random.between(settings.gapMinMs, settings.gapMaxMs).coerceAtLeast(EffectTiming.MIN_GAP_MS)
 
-    private fun pulses(): Int = random.between(settings.pulsesMin, settings.pulsesMax).coerceAtLeast(1)
+    private fun pulses(): Int =
+        if (flicker) random.between(FlashSettings.FLICKER_PULSES_MIN, FlashSettings.FLICKER_PULSES_MAX) else 1
 
     private fun startBurst() {
         burstSize = pulses()
         pulseIndex = 0
-        strongPulse = if (burstSize > 1) random.nextInt(burstSize) else -1
-        peak = pickPeak()
+        strongPulse = if (burstSize > 1) burstSize - 1 else -1
+        pickPulse()
     }
 
-    /** One pulse of a burst hits the top of the range; every other pulse lands anywhere in it. */
-    private fun pickPeak(): Float = if (pulseIndex == strongPulse) peakHigh else random.between(peakLow, peakHigh)
+    /**
+     * A single flash lands anywhere in the peak range. In a Flicker burst the echoes come first,
+     * sharing the top of the range at a fraction of the strength and dying away fast so the next
+     * can hit; the last pulse is the full strike and takes the layer's Release.
+     */
+    private fun pickPulse() {
+        if (strongPulse < 0) {
+            peak = random.between(peakLow, peakHigh)
+            strength = 1f
+            return
+        }
+        peak = peakHigh
+        if (pulseIndex == strongPulse) {
+            strength = 1f
+            release = userRelease
+        } else {
+            strength = random.between(ECHO_STRENGTH_MIN, ECHO_STRENGTH_MAX)
+            release = FLICKER_RELEASE_MS
+        }
+        pulseLength = attack + hold + release
+    }
 
     companion object {
         const val IDLE = 0
         const val ATTACK = 1
         const val HOLD = 2
         const val RELEASE = 3
+
+        /**
+         * Time from the end of one Flicker pulse to the start of the next (owner request: 5–10 ms).
+         * Wi-Fi delivery jitters by about that much, so on real bulbs the pulses land a little
+         * unevenly, which suits a flicker.
+         */
+        const val FLICKER_SPACING_MIN_MS = 5
+        const val FLICKER_SPACING_MAX_MS = 10
+
+        /**
+         * Every Flicker pulse snaps on (no attack) and holds this long, the fastest a bulb shows
+         * reliably over Wi-Fi (about one network round trip).
+         */
+        const val FLICKER_HOLD_MS = 40
+
+        /** How fast a Flicker pulse dies away before the next one; the last uses the layer's Release. */
+        const val FLICKER_RELEASE_MS = 60
+
+        /** A Flicker echo's strength as a share of the main pulse's (owner request: 20 % or less). */
+        const val ECHO_STRENGTH_MIN = 0.1f
+        const val ECHO_STRENGTH_MAX = 0.2f
     }
 }
 
 /* One group */
+
+/**
+ * Spin on one bulb: its turn comes every lap ([SpinSettings.stepMs] × bulbs + the lap gap), at
+ * [index] steps into the lap; each turn is an Attack-Hold-Release envelope. A release longer than
+ * a lap overlaps the next turn, and the brighter of the two counts. Times are on the group's clock.
+ */
+internal class SpinTimeline(settings: SpinSettings, index: Int, bulbCount: Int) {
+    private val attack = settings.attackMs.coerceAtLeast(0).toLong()
+    private val hold = settings.holdMs.coerceAtLeast(0).toLong()
+    private val release = settings.releaseMs.coerceAtLeast(0).toLong()
+    private val length = attack + hold + release
+    private val step = settings.stepMs.coerceAtLeast(MIN_STEP_MS).toLong()
+    private val period = (step * bulbCount + settings.lapGapMs.coerceAtLeast(0)).coerceAtLeast(MIN_STEP_MS.toLong())
+    // Reverse runs the same order backwards: the last bulb goes first.
+    private val offset = step * (if (settings.reverse) bulbCount - 1 - index else index)
+    val peak = settings.level.coerceIn(0f, 1f)
+
+    /** Time into the current turn (0 until the period), and which lap it is. */
+    private fun rel(t: Long): Long = Math.floorMod(t - offset, period)
+
+    private fun lap(t: Long): Long = Math.floorDiv(t - offset, period)
+
+    /** 0–1 envelope at [rel] ms into a turn (0 outside it). */
+    private fun envelope(rel: Long): Float {
+        if (rel < 0 || rel >= length) return 0f
+        if (rel < attack) return rel.toFloat() / attack
+        if (rel < attack + hold) return 1f
+        return 1f - (rel - attack - hold).toFloat() / release
+    }
+
+    /** The envelope at [t]: this turn's, or the previous turn's trail if that's brighter. */
+    fun levelAt(t: Long): Float {
+        val r = rel(t)
+        val now = envelope(r)
+        if (length <= period) return now
+        return maxOf(now, envelope(r + period))
+    }
+
+    /** Attack, hold, release or idle of the current turn (the runner sends on every change). */
+    fun segment(t: Long): Int {
+        val r = rel(t)
+        return when {
+            r < attack -> FlashTimeline.ATTACK
+            r < attack + hold -> FlashTimeline.HOLD
+            r < length -> FlashTimeline.RELEASE
+            else -> FlashTimeline.IDLE
+        }
+    }
+
+    fun key(t: Long): Long = lap(t) * 4 + segment(t)
+
+    /** When the current segment ends, on the group's clock. */
+    fun segmentEnd(t: Long): Long {
+        val r = rel(t)
+        val turnStart = t - r
+        val end = when {
+            r < attack -> attack
+            r < attack + hold -> attack + hold
+            r < length -> length
+            else -> period
+        }
+        return turnStart + end
+    }
+
+    companion object {
+        const val MIN_STEP_MS = 50
+    }
+}
 
 /**
  * Runs one group's effect layers for its bulbs (indexed 0 until [bulbCount], in the group's bulb
@@ -431,6 +567,8 @@ class GroupEffectRun(
     private val flashLayer: List<FlashTimeline>?
     private val flashDelay: LongArray?
     private val flashColor: ColorPoint?
+    private val spinLayer: Array<SpinTimeline>?
+    private val spinColor: ColorPoint?
 
     init {
         if (effects.runsColorShift) {
@@ -460,6 +598,15 @@ class GroupEffectRun(
             flashDelay = null
             flashColor = null
         }
+        // Spin runs across the bulbs in their order; spread doesn't apply.
+        if (effects.spin.enabled && bulbCount > 0) {
+            val settings = effects.spin
+            spinLayer = Array(bulbCount) { SpinTimeline(settings, it, bulbCount) }
+            spinColor = ColorPoint.of(settings.color)
+        } else {
+            spinLayer = null
+            spinColor = null
+        }
     }
 
     /** Moves the group's base (its scene color) without restarting any timeline. */
@@ -482,11 +629,12 @@ class GroupEffectRun(
      * release and idle start, which is when the runner sends straight away. -1 without Flashes.
      */
     fun flashKey(bulb: Int, t: Long): Long {
-        val layer = flashLayer ?: return -1L
+        val spin = spinLayer?.get(bulb)?.key(t) ?: 0L
+        val layer = flashLayer ?: return if (spinLayer == null) -1L else spin
         val ft = layerTime(t, flashDelay!!, bulb)
         val timeline = layer[bulb]
         timeline.advance(ft)
-        return timeline.serial * 4 + timeline.segment(ft)
+        return (timeline.serial * 4 + timeline.segment(ft)) * 31 + spin
     }
 
     /**
@@ -494,9 +642,10 @@ class GroupEffectRun(
      * first). The runner wakes then, so edges aren't late. [Long.MAX_VALUE] without Flashes.
      */
     fun nextFlashEdge(bulb: Int, t: Long): Long {
-        val layer = flashLayer ?: return Long.MAX_VALUE
+        val spinEdge = spinLayer?.get(bulb)?.segmentEnd(t) ?: Long.MAX_VALUE
+        val layer = flashLayer ?: return spinEdge
         val delays = flashDelay!!
-        return layer[bulb].segmentEnd(layerTime(t, delays, bulb)) + delays[bulb]
+        return minOf(spinEdge, layer[bulb].segmentEnd(layerTime(t, delays, bulb)) + delays[bulb])
     }
 
     /**
@@ -515,6 +664,45 @@ class GroupEffectRun(
         if (brightness != null) out.brightness = brightness[bulb].sample(layerTime(ahead, brightnessDelay!!, bulb))
 
         val regular = (if (lookAheadMs > 0L) lookAheadMs else EffectTiming.FRAME_MS).toInt()
+        val spun = applySpin(bulb, t, out, regular)
+        val flashed = applyFlash(bulb, t, out, regular)
+        return minOf(spun, flashed)
+    }
+
+    /**
+     * Lays bulb [bulb]'s Spin at [t] over [out] (color toward the spin color, brightness up to its
+     * level: brightest wins) and returns the transition: [regular], or the time to the end of an
+     * attack or release (aimed there, so short attacks stay crisp), or 0 to snap on for a hold.
+     */
+    private fun applySpin(bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
+        val timeline = spinLayer?.get(bulb) ?: return regular
+        val segment = timeline.segment(t)
+        var lead = 0L
+        var transition = regular.toLong()
+        if (segment == FlashTimeline.ATTACK || segment == FlashTimeline.RELEASE) {
+            lead = minOf(timeline.segmentEnd(t) - t, EffectTiming.FRAME_MS).coerceAtLeast(0L)
+            transition = lead
+        } else if (segment == FlashTimeline.HOLD) {
+            transition = 0L
+        }
+        val level = timeline.levelAt(t + lead)
+        if (level > 0f) {
+            val spin = spinColor!!
+            blendColor(out.hue, out.saturation, out.kelvin, spin.hue, spin.saturation, spin.kelvin, level, out)
+            val peak = timeline.peak
+            if (peak > out.brightness) out.brightness += (peak - out.brightness) * level
+        }
+        return transition.toInt()
+    }
+
+    /**
+     * Blends bulb [bulb]'s flash at [t] into whatever [out] holds and returns the transition to
+     * send it with: [regular], or shorter during a flash's attack or release, so short attacks
+     * stay crisp. [sample] uses it for the group's own bulbs; the runner also uses it to lay this
+     * group's flashes over a bulb another group owns (owner decision: a bulb in several lit
+     * groups flashes with every one of them). Returns [regular] untouched without Flashes.
+     */
+    fun applyFlash(bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
         val flashes = flashLayer ?: return regular
         val ft = layerTime(t, flashDelay!!, bulb)
         val timeline = flashes[bulb]
@@ -525,11 +713,21 @@ class GroupEffectRun(
         if (segment == FlashTimeline.ATTACK || segment == FlashTimeline.RELEASE) {
             lead = minOf(timeline.segmentEnd(ft) - ft, EffectTiming.FRAME_MS).coerceAtLeast(0L)
             transition = lead
+        } else if (segment == FlashTimeline.HOLD) {
+            // The hold sits at the flash's full level: show it at once. With no attack (Flicker,
+            // or a Single flash set to 0) this is what snaps the flash on.
+            transition = 0L
         }
-        val level = timeline.levelAt(ft + lead)
-        if (level > 0f) {
+        val envelope = timeline.levelAt(ft + lead)
+        if (envelope > 0f) {
+            val strength = timeline.strength
+            val level = envelope * strength
+            // On the way out the scene's color comes back faster than its brightness (squared
+            // envelope): bulbs show low saturation as near-white, so an even color fade looked
+            // white for most of the release and then snapped to the color (owner feedback).
+            val colorLevel = if (segment == FlashTimeline.RELEASE) envelope * envelope * strength else level
             val flash = flashColor!!
-            blendColor(out.hue, out.saturation, out.kelvin, flash.hue, flash.saturation, flash.kelvin, level, out)
+            blendColor(out.hue, out.saturation, out.kelvin, flash.hue, flash.saturation, flash.kelvin, colorLevel, out)
             out.brightness += (timeline.peak - out.brightness) * level
         }
         return transition.toInt()

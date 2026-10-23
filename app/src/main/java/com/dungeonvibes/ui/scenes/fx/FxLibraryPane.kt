@@ -15,11 +15,13 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -31,17 +33,23 @@ import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dungeonvibes.R
 import com.dungeonvibes.data.db.FxEntity
 import com.dungeonvibes.data.db.FxPrimitive
+import com.dungeonvibes.ui.adventures.play.FxBurstIcon
 import com.dungeonvibes.ui.common.FxHaptic
 import com.dungeonvibes.ui.common.ConfirmDialog
+import com.dungeonvibes.ui.common.ItemMenuButton
+import com.dungeonvibes.ui.common.UndoDeleteSnackbars
 import com.dungeonvibes.ui.common.LightColors
 import com.dungeonvibes.ui.common.LocalOnLocalNetwork
 import com.dungeonvibes.ui.common.Swatch
+import com.dungeonvibes.ui.common.SwatchSize
 import com.dungeonvibes.ui.common.TopLevelScreen
 import kotlinx.coroutines.launch
 import sh.calvin.reorderable.ReorderableItem
@@ -57,6 +65,7 @@ fun FxLibraryPane(
     viewModel: FxLibraryViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val tryLabel = stringResource(R.string.fx_try)
     val onLocalNetwork = LocalOnLocalNetwork.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -70,9 +79,12 @@ fun FxLibraryPane(
         haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
     }
     var pendingDelete by remember { mutableStateOf<FxEntity?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+    UndoDeleteSnackbars(viewModel.deletions, snackbar)
 
     TopLevelScreen(
         title = stringResource(R.string.nav_scenes),
+        snackbarHostState = snackbar,
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { scope.launch { onOpen(viewModel.create(newName)) } },
@@ -90,6 +102,8 @@ fun FxLibraryPane(
             ) {
                 items(ordered, key = { it.item.fx.id }) { row ->
                     val fx = row.item.fx
+                    // Each tap bursts the row's play button once.
+                    var fires by remember(fx.id) { mutableIntStateOf(0) }
                     ReorderableItem(reorderState, key = fx.id) { isDragging ->
                         val elevation by animateDpAsState(if (isDragging) 6.dp else 0.dp, label = "dragElevation")
                         Surface(
@@ -115,7 +129,7 @@ fun FxLibraryPane(
                                 ) {
                                     Icon(painterResource(R.drawable.ic_drag_handle), contentDescription = stringResource(R.string.action_reorder))
                                 }
-                                Swatch(fxSwatchColor(fx), 24.dp, Modifier.padding(end = 12.dp))
+                                Swatch(fxSwatchColor(fx), SwatchSize.Large, Modifier.padding(end = 12.dp))
                                 Column(Modifier.weight(1f)) {
                                     Text(fx.name, style = MaterialTheme.typography.bodyLarge)
                                     Text(
@@ -128,14 +142,20 @@ fun FxLibraryPane(
                                     onClick = {
                                         haptics.performHapticFeedback(FxHaptic)
                                         viewModel.tryFx(row.item)
+                                        fires++
                                     },
                                     enabled = onLocalNetwork && !row.item.hasNoTargets,
                                 ) {
-                                    Icon(painterResource(R.drawable.ic_play), contentDescription = stringResource(R.string.fx_try))
+                                    FxBurstIcon(
+                                        fires = fires,
+                                        color = fxSwatchColor(fx),
+                                        modifier = Modifier.semantics { contentDescription = tryLabel },
+                                    )
                                 }
-                                IconButton(onClick = { pendingDelete = fx }) {
-                                    Icon(painterResource(R.drawable.ic_delete), contentDescription = stringResource(R.string.action_delete))
-                                }
+                                ItemMenuButton(
+                                    onDuplicate = { viewModel.duplicate(fx.id) },
+                                    onDelete = { pendingDelete = fx },
+                                )
                             }
                         }
                     }
@@ -172,7 +192,7 @@ fun FxLibraryPane(
 /** "Pulse · All lights", "Flicker · Ceiling, Lamp". */
 @Composable
 internal fun fxSummary(row: FxListItem): String {
-    val primitive = stringResource(if (row.item.fx.primitive == FxPrimitive.FLICKER) R.string.fx_flicker else R.string.fx_pulse)
+    val primitive = stringResource(primitiveLabel(row.item.fx.primitive))
     return if (row.item.fx.targetAll) {
         stringResource(R.string.fx_summary_all, primitive)
     } else {
@@ -180,13 +200,24 @@ internal fun fxSummary(row: FxListItem): String {
     }
 }
 
+/** The name of an FX primitive, for summaries and the editor's choice. */
+internal fun primitiveLabel(primitive: FxPrimitive): Int = when (primitive) {
+    FxPrimitive.PULSE -> R.string.fx_pulse
+    FxPrimitive.FLICKER -> R.string.fx_flicker
+    FxPrimitive.STROBE -> R.string.fx_strobe
+    FxPrimitive.SPIN -> R.string.fx_spin
+}
+
 /**
- * The color an FX shows: a Pulse's color, or null (a hollow swatch) for an FX that has no color
- * of its own: a Flicker, or a Pulse that only moves brightness.
+ * The color an FX shows: a Pulse's, Strobe's or Spin's color, or null (a hollow swatch) for an FX
+ * that has no color of its own: a Flicker, or a Pulse that only moves brightness.
  */
-internal fun fxSwatchColor(fx: FxEntity): Color? {
-    if (fx.primitive != FxPrimitive.PULSE) return null
-    val pulse = fx.pulse
-    if (!pulse.affectsColor && !pulse.affectsSaturation) return null
-    return LightColors.displayColor(pulse.color)
+internal fun fxSwatchColor(fx: FxEntity): Color? = when (fx.primitive) {
+    FxPrimitive.PULSE -> {
+        val pulse = fx.pulse
+        if (!pulse.affectsColor && !pulse.affectsSaturation) null else LightColors.displayColor(pulse.color)
+    }
+    FxPrimitive.FLICKER -> null
+    FxPrimitive.STROBE -> LightColors.displayColor(fx.strobe.color)
+    FxPrimitive.SPIN -> LightColors.displayColor(fx.spin.color)
 }

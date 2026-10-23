@@ -17,6 +17,9 @@ class BulbRepository @Inject constructor(
 
     fun observeBulbs(): Flow<List<BulbEntity>> = bulbDao.observeAll()
 
+    /** One bulb, or null once it's removed. */
+    fun observeBulb(bulbId: Long): Flow<BulbEntity?> = bulbDao.observe(bulbId)
+
     suspend fun hasAnyBulbs(): Boolean = bulbDao.hasAny()
 
     /**

@@ -29,6 +29,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
@@ -44,6 +45,7 @@ import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -62,6 +64,7 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dungeonvibes.R
 import com.dungeonvibes.ui.common.NameKeyboardOptions
+import com.dungeonvibes.data.db.BulbEntity
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneLightEntity
 import com.dungeonvibes.data.scene.GroupEffects
@@ -71,9 +74,12 @@ import com.dungeonvibes.ui.common.GradientSlider
 import com.dungeonvibes.ui.common.LightColors
 import com.dungeonvibes.ui.common.SettingsCard
 import com.dungeonvibes.ui.common.Swatch
+import com.dungeonvibes.ui.common.SwatchSize
 import com.dungeonvibes.ui.common.SteadySlider
+import com.dungeonvibes.ui.common.snapMs
 import com.dungeonvibes.ui.common.TopLevelScreen
 import kotlin.math.roundToInt
+import kotlin.math.sqrt
 
 /**
  * Editor for one scene (library or adventure). Shows a back arrow when [showBack], i.e. when it is
@@ -150,12 +156,17 @@ fun SceneEditor(
             }
             return@TopLevelScreen
         }
-        // Items above the groups, so a group's list index is known for scrolling to it: name (the
-        // default scene shows a hint instead), fade, preview, (adventure actions), divider, then
-        // "All lights" when there are groups.
+        // Items above the groups, so a row's list index is known for scrolling to it: name (the
+        // default scene shows a hint instead), fade, (adventure actions), divider, ("no groups"),
+        // then the individual lights (a header and one row each), then "All lights" when there are
+        // groups. Live preview is always on (owner decision).
         val showName = !state.isDefault
         val showAdventureActions = !state.isLibraryScene && !state.isDefault
-        val headerCount = 4 + (if (showAdventureActions) 1 else 0) + (if (state.rows.isEmpty()) 0 else 1)
+        val prefix = 3 + (if (showAdventureActions) 1 else 0) + (if (state.rows.isEmpty()) 1 else 0)
+        val showSingles = state.singleRows.isNotEmpty() || state.addableBulbs.isNotEmpty()
+        val singlesStart = prefix + 1
+        val afterSingles = prefix + (if (showSingles) 1 + state.singleRows.size else 0)
+        val headerCount = afterSingles + (if (state.rows.isEmpty()) 0 else 1)
         LazyColumn(state = listState, modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(bottom = 32.dp)) {
             if (state.isDefault) {
                 item(key = "default-hint") {
@@ -195,22 +206,10 @@ fun SceneEditor(
                         },
                 )
             }
-            item(key = "fade") { FadeControl(state.fadeMs, viewModel::setFadeMs) }
-            item(key = "preview") {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(stringResource(R.string.scene_live_preview), style = MaterialTheme.typography.bodyLarge)
-                        Text(
-                            stringResource(R.string.scene_live_preview_hint),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(checked = state.livePreview, onCheckedChange = viewModel::setLivePreview)
-                }
+            // Introduction: how the scene arrives. The default lighting is never played from a
+            // tile or the library, so it has no intro FX.
+            item(key = "intro") {
+                IntroductionCard(sceneId, state.fadeMs, viewModel::setFadeMs, showIntroFx = !state.isDefault)
             }
             if (showAdventureActions) {
                 item(key = "adventure-actions") {
@@ -248,6 +247,35 @@ fun SceneEditor(
                 } else {
                     expandedSlotId = slotId
                     scope.launch { listState.animateScrollToItem(listIndex) }
+                }
+            }
+            // Individual lights: single bulbs set on their own, above everything they win over.
+            if (showSingles) {
+                item(key = "singles-header") {
+                    SinglesHeader(addable = state.addableBulbs, onAdd = viewModel::addSingleLights)
+                }
+                itemsIndexed(state.singleRows, key = { _, row -> "single-${row.slot.id}" }) { index, row ->
+                    val slotId = row.slot.id
+                    SlotRow(
+                        row = row,
+                        expanded = expandedSlotId == slotId,
+                        onToggleExpanded = { toggle(slotId, singlesStart + index) },
+                        onOnChange = { viewModel.setOn(slotId, it) },
+                        onModeChange = { viewModel.setMode(slotId, it) },
+                        onHueChange = { viewModel.setHue(slotId, it) },
+                        onSaturationChange = { viewModel.setSaturation(slotId, it) },
+                        onBrightnessChange = { viewModel.setBrightness(slotId, it) },
+                        onKelvinChange = { viewModel.setKelvin(slotId, it) },
+                        onMultiColorChange = { viewModel.setMultiColor(slotId, it) },
+                        livePreview = state.livePreview,
+                        onEffectsChange = { viewModel.setEffects(slotId, it) },
+                        onFlashNow = { viewModel.flashNow(slotId) },
+                        onRemove = {
+                            if (expandedSlotId == slotId) expandedSlotId = null
+                            viewModel.removeSingleLight(slotId)
+                        },
+                    )
+                    HorizontalDivider()
                 }
             }
             val roomRow = state.roomRow
@@ -315,22 +343,68 @@ fun SceneEditor(
     }
 }
 
+/** "Individual lights", what they do, and a button that opens the bulb picker (when any are left). */
 @Composable
-private fun FadeControl(fadeMs: Int, onChange: (Int) -> Unit) {
-    val seconds = fadeMs / 1000f
-    Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
+private fun SinglesHeader(addable: List<BulbEntity>, onAdd: (List<Long>) -> Unit) {
+    var picking by rememberSaveable { mutableStateOf(false) }
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 4.dp),
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(stringResource(R.string.scene_singles_title), style = MaterialTheme.typography.titleSmall)
+            Text(
+                stringResource(R.string.scene_singles_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+            )
+        }
+        if (addable.isNotEmpty()) {
+            TextButton(onClick = { picking = true }) { Text(stringResource(R.string.scene_singles_add)) }
+        }
+    }
+    // Close the picker if the last addable bulb goes (added here, or removed in Setup).
+    if (picking && addable.isNotEmpty()) {
+        AddLightsDialog(
+            bulbs = addable,
+            onAdd = { ids ->
+                picking = false
+                onAdd(ids)
+            },
+            onDismiss = { picking = false },
+        )
+    }
+}
+
+@Composable
+internal fun FadeControl(fadeMs: Int, onChange: (Int) -> Unit) {
+    val max = SceneRepository.MAX_FADE_MS
+    Column {
         Text(
-            stringResource(R.string.scene_fade, seconds),
+            stringResource(R.string.scene_fade_label, formatFade(fadeMs)),
             style = MaterialTheme.typography.bodyLarge,
         )
         SteadySlider(
-            value = seconds,
-            onValueChange = { onChange((it * 1000f).roundToInt()) },
-            valueRange = 0f..(SceneRepository.MAX_FADE_MS / 1000f),
-            // 0.1 s increments from 0 to 10 s.
-            steps = 99,
+            // A squared scale, so the usual few seconds get most of the slider and ten minutes
+            // still fit; whole seconds only (owner request: no tiny steps).
+            value = sqrt((fadeMs.toFloat() / max).coerceIn(0f, 1f)),
+            onValueChange = { p ->
+                val seconds = (p * p * max / 1_000f).roundToInt()
+                onChange((seconds * 1_000).coerceIn(0, max))
+            },
         )
     }
+}
+
+/** "0 s", "45 s", "2 min 30 s". */
+private fun formatFade(ms: Int): String {
+    val seconds = ms / 1_000
+    if (seconds < 60) return "$seconds s"
+    val rest = seconds % 60
+    return if (rest == 0) "${seconds / 60} min" else "${seconds / 60} min $rest s"
 }
 
 @Composable
@@ -348,6 +422,8 @@ private fun SlotRow(
     livePreview: Boolean,
     onEffectsChange: (GroupEffects) -> Unit,
     onFlashNow: () -> Unit,
+    /** Individual lights only: takes the light out of the scene. */
+    onRemove: (() -> Unit)? = null,
 ) {
     val chevronTurn by animateFloatAsState(if (expanded) 180f else 0f, label = "chevron")
     val isRoom = row.slot.isRoom
@@ -356,16 +432,21 @@ private fun SlotRow(
     val canOpen = !locked && (!isRoom || row.isOn)
     // A slot without settings shows the defaults it would get when first changed.
     val light = row.light
-    val swatchColor = if (light != null && row.isOn) LightColors.displayColor(light) else null
+    // The swatch shows a color only when the bulbs actually show it: a group that's off, or
+    // overridden by All lights, is an empty swatch (owner request).
+    val visible = row.isOn && !locked
+    val swatchColor = if (light != null && visible) LightColors.displayColor(light) else null
     val effects = row.effects
-    val runsEffects = row.isOn && effects?.hasAny == true
-    val shiftColors = remember(effects, row.isOn) {
-        if (row.isOn && effects != null && effects.runsColorShift) effects.palette.map(LightColors::displayColor) else emptyList()
+    // The ✦ marks effect layers; Multi-color is a way of coloring, not an effect.
+    val runsEffects = visible && effects?.hasEffectLayers == true
+    val shiftColors = remember(effects, visible) {
+        if (visible && effects != null && effects.runsColorShift) effects.palette.map(LightColors::displayColor) else emptyList()
     }
 
     val name = if (isRoom) stringResource(R.string.scene_all_lights) else row.slot.name
     val hint = when {
-        isRoom -> stringResource(R.string.scene_all_lights_hint)
+        isRoom -> null
+        row.slot.bulbId != null -> stringResource(R.string.scene_single_hint)
         locked -> stringResource(R.string.scene_using_all_lights)
         !row.hasBulbs -> stringResource(R.string.slot_no_bulbs)
         else -> null
@@ -382,14 +463,40 @@ private fun SlotRow(
         ) {
             // Under All lights a group's switch shows lit and can't be changed; its own setting is
             // kept underneath and comes back when All lights goes off.
-            Switch(checked = row.isOn, onCheckedChange = onOnChange, enabled = !locked)
+            // A padlock on top says why it can't be changed.
+            Box(contentAlignment = Alignment.Center) {
+                Switch(checked = row.isOn, onCheckedChange = onOnChange, enabled = !locked)
+                if (locked) {
+                    Icon(
+                        painterResource(R.drawable.ic_lock),
+                        contentDescription = stringResource(R.string.scene_locked_by_all_lights),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.size(LOCK_ICON_SIZE),
+                    )
+                }
+            }
             Spacer(Modifier.width(16.dp))
-            Swatch(swatchColor, 36.dp, Modifier.clickable(enabled = canOpen, onClick = onToggleExpanded), shiftColors)
+            Swatch(
+                swatchColor,
+                SwatchSize.ExtraLarge,
+                Modifier.clickable(enabled = canOpen, onClick = onToggleExpanded),
+                shiftColors,
+                hasEffects = runsEffects,
+            )
             Spacer(Modifier.width(16.dp))
             Column(Modifier.weight(1f)) {
-                Text(if (runsEffects) "$name  ✦" else name, style = MaterialTheme.typography.bodyLarge)
+                Text(name, style = MaterialTheme.typography.bodyLarge)
                 if (hint != null) {
                     Text(hint, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (onRemove != null) {
+                IconButton(onClick = onRemove) {
+                    Icon(
+                        painterResource(R.drawable.ic_delete),
+                        contentDescription = stringResource(R.string.scene_single_remove, name),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                 }
             }
             if (canOpen) {
@@ -506,3 +613,6 @@ private fun SliderLabel(text: String) {
         modifier = Modifier.padding(top = 8.dp),
     )
 }
+
+/** The padlock over a group's switch while All lights is on. */
+private val LOCK_ICON_SIZE = 18.dp

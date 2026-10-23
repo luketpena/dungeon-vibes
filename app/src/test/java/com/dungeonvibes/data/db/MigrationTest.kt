@@ -4,14 +4,17 @@ import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import com.dungeonvibes.data.TimeSource
+import com.dungeonvibes.data.fx.FxRepository
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
+import com.dungeonvibes.data.slot.LightSlotRepository
 import java.io.File
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -55,7 +58,7 @@ class MigrationTest {
                 assertEquals(1L, copy.parentSceneId)
                 assertEquals(1L, copy.adventureId)
                 assertEquals(listOf(SceneLightEntity(1, 1, true, LightMode.WHITE, 30f, 0.5f, 2_700, 0.6f)), scenes.getSceneLights(1))
-                assertEquals(1, db.sceneLightDao().applyTargets(1).size)
+                assertEquals(1, scenes.applyTargets(1).size)
 
                 // The new tables work.
                 assertTrue(scenes.getSceneEffects(1).isEmpty())
@@ -154,6 +157,130 @@ class MigrationTest {
                 assertTrue(effects.colorShift.brightnessLocked)
                 // Flash colors use their peak; theirs is simply 100 %.
                 assertEquals(1f, effects.flashes.color.brightness, 0f)
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun version8To9_keepsGroupMembership_letsBulbsJoinMoreGroups_andAddsIndividualLights() {
+        createDatabase(
+            8,
+            listOf(
+                "INSERT INTO bulbs VALUES (1, 'lifx_lan', 'd073d5000001', '192.168.1.20', 'Left Lamp', 1000)",
+                "INSERT INTO light_slots (id, name, sortOrder, isRoom) VALUES (1, 'Ceiling', 0, 0)",
+                "INSERT INTO light_slots (id, name, sortOrder, isRoom) VALUES (2, 'Lamp', 1, 0)",
+                "INSERT INTO slot_bulbs VALUES (1, 1)",
+            ),
+        )
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .allowMainThreadQueries()
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .build()
+        try {
+            runBlocking {
+                val slotDao = db.lightSlotDao()
+                assertEquals(listOf(1L), slotDao.assignments().map { it.slotId })
+
+                // A bulb can now be in a second group.
+                val slots = LightSlotRepository(db)
+                slots.assignBulb(1, 2)
+                assertEquals(setOf(1L, 2L), slotDao.assignments().map { it.slotId }.toSet())
+
+                // Individual-light slots are hidden from the groups and go with their bulb.
+                slots.ensureBulbSlot(1)
+                assertEquals(1, slotDao.bulbSlots().size)
+                assertEquals(listOf("Ceiling", "Lamp"), slotDao.groups().map { it.name })
+                db.bulbDao().delete(1)
+                assertTrue(slotDao.bulbSlots().isEmpty())
+                assertTrue(slotDao.assignments().isEmpty())
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun version9To10_ordersGroupBulbsByName_andAddsStrobeSpinAndFavorites() {
+        createDatabase(
+            9,
+            listOf(
+                "INSERT INTO bulbs VALUES (1, 'lifx_lan', 'd073d5000001', '192.168.1.20', 'zed', 1000)",
+                "INSERT INTO bulbs VALUES (2, 'lifx_lan', 'd073d5000002', '192.168.1.21', 'Amy', 1000)",
+                "INSERT INTO bulbs VALUES (3, 'lifx_lan', 'd073d5000003', '192.168.1.22', 'Moe', 1000)",
+                "INSERT INTO light_slots (id, name, sortOrder, isRoom) VALUES (1, 'Ceiling', 0, 0)",
+                "INSERT INTO light_slots (id, name, sortOrder, isRoom) VALUES (2, 'Lamp', 1, 0)",
+                "INSERT INTO slot_bulbs VALUES (1, 1)",
+                "INSERT INTO slot_bulbs VALUES (1, 2)",
+                "INSERT INTO slot_bulbs VALUES (1, 3)",
+                "INSERT INTO slot_bulbs VALUES (2, 1)",
+                "INSERT INTO adventures VALUES (1, 'The Lost Mine', 0, 1000, 1000)",
+            ),
+        )
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .allowMainThreadQueries()
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .build()
+        try {
+            runBlocking {
+                // Each group keeps showing its bulbs by name (case-insensitive), now as its order.
+                val assignments = db.lightSlotDao().assignments()
+                assertEquals(listOf(2L, 3L, 1L), assignments.filter { it.slotId == 1L }.map { it.bulbId })
+                assertEquals(listOf(0, 1, 2), assignments.filter { it.slotId == 1L }.map { it.position })
+                assertEquals(0, assignments.single { it.slotId == 2L }.position)
+
+                // Strobe, Spin and favorites work.
+                val fx = FxRepository(db, TimeSource { 2_000L })
+                val id = fx.create("Lightning")
+                val stored = fx.get(id)!!.fx
+                assertEquals(StrobeSettings(), stored.strobe)
+                assertEquals(SpinFxSettings(), stored.spin)
+                fx.setFavorite(1, id, true)
+                assertEquals(listOf(id), fx.observeFavorites(1).first())
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun version10ToCurrent_spinsKeepTheirDirection_andScenesGainIntroFx() {
+        createDatabase(
+            10,
+            listOf(
+                "INSERT INTO fx (id, name, sortOrder, primitive, targetAll, spread, waveOffsetMs, " +
+                "transition, transitionSceneId, createdAt, updatedAt, pulse_peakMin, pulse_peak, " +
+                "pulse_attackMs, pulse_holdMs, pulse_releaseMs, pulse_pulsesMin, pulse_pulsesMax, " +
+                "pulse_spacingMinMs, pulse_spacingMaxMs, pulse_affectsColor, pulse_affectsSaturation, " +
+                "pulse_affectsBrightness, pulse_color_mode, pulse_color_hue, pulse_color_saturation, " +
+                "pulse_color_kelvin, pulse_color_brightness, flicker_durationMs, flicker_depth, " +
+                "flicker_intervalMinMs, flicker_intervalMaxMs, strobe_level, strobe_flashesPerSecond, " +
+                "strobe_durationMs, strobe_color_mode, strobe_color_hue, strobe_color_saturation, " +
+                "strobe_color_kelvin, strobe_color_brightness, spin_level, spin_attackMs, spin_holdMs, " +
+                "spin_releaseMs, spin_stepMs, spin_laps, spin_color_mode, spin_color_hue, " +
+                "spin_color_saturation, spin_color_kelvin, spin_color_brightness) VALUES (1, 'Whirl', 1, " +
+                "'SPIN', 1, 'TOGETHER', 1, 'RETURN', NULL, 1, 1, 1.0, 1.0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, " +
+                "'WHITE', 1.0, 1.0, 1, 1.0, 1, 1.0, 1, 1, 1.0, 1.0, 1, 'WHITE', 1.0, 1.0, 1, 1.0, 1.0, 1, " +
+                "1, 1, 1, 1, 'WHITE', 1.0, 1.0, 1, 1.0)",
+            ),
+        )
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .allowMainThreadQueries()
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .build()
+        try {
+            runBlocking {
+                val fx = FxRepository(db, TimeSource { 2_000L }).get(1)!!.fx
+                assertEquals(false, fx.spin.reverse)
+                // 11 → 12: scenes can open with an FX; deleting it clears that.
+                val scenes = SceneRepository(db, TimeSource { 2_000L })
+                val scene = scenes.createLibraryScene("Dawn")
+                assertNull(scenes.getScene(scene)!!.introFxId)
+                scenes.setIntroFx(scene, 1)
+                assertEquals(1L, scenes.getScene(scene)!!.introFxId)
+                db.fxDao().delete(1)
+                assertNull(scenes.getScene(scene)!!.introFxId)
             }
         } finally {
             db.close()

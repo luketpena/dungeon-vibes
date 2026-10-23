@@ -16,6 +16,7 @@ import com.dungeonvibes.light.ActiveScene
 import com.dungeonvibes.light.CommandedLight
 import com.dungeonvibes.light.LightMirror
 import com.dungeonvibes.light.ScenePlayer
+import com.dungeonvibes.ui.common.DeletedItem
 import com.dungeonvibes.ui.scenes.SceneListItem
 import com.dungeonvibes.ui.scenes.SceneSwatch
 import com.dungeonvibes.ui.scenes.buildSwatches
@@ -25,9 +26,12 @@ import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
 import dagger.assisted.AssistedInject
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -65,17 +69,31 @@ internal fun buildGlowBulbs(
     assignments: List<SlotBulbEntity>,
     bulbs: List<BulbEntity>,
 ): GlowBulbs {
-    if (assignments.isEmpty()) return GlowBulbs()
-    val slotOf = HashMap<Long, Long>(assignments.size)
-    for (assignment in assignments) slotOf[assignment.bulbId] = assignment.slotId
-    val bySlot = HashMap<Long, ArrayList<String>>()
-    for (bulb in bulbs) {
-        val slotId = slotOf[bulb.id] ?: continue
-        bySlot.getOrPut(slotId) { ArrayList(2) }.add(LightMirror.keyOf(bulb.protocolId, bulb.serial))
+    val bulbCount = bulbs.size
+    if (bulbCount == 0) return GlowBulbs()
+    val keyOf = HashMap<Long, String>(bulbCount * 2)
+    for (bulb in bulbs) keyOf[bulb.id] = LightMirror.keyOf(bulb.protocolId, bulb.serial)
+    // A bulb can be in several groups. Each group's bulbs in its bulb order (Setup → Groups).
+    val members = HashMap<Long, ArrayList<SlotBulbEntity>>()
+    for (assignment in assignments) members.getOrPut(assignment.slotId) { ArrayList(4) }.add(assignment)
+    val bySlot = HashMap<Long, List<String>>()
+    // Each group's bulbs once, groups in order: an All-lights glow covers every bulb once.
+    val all = LinkedHashSet<String>()
+    for (slot in slots) {
+        val single = slot.bulbId
+        if (single != null) {
+            // An individual light's slot: just its bulb.
+            keyOf[single]?.let { bySlot[slot.id] = listOf(it) }
+            continue
+        }
+        val ids = members[slot.id] ?: continue
+        ids.sortWith(compareBy<SlotBulbEntity>({ it.position }, { it.bulbId }))
+        val keys = ArrayList<String>(ids.size)
+        for (member in ids) keyOf[member.bulbId]?.let(keys::add)
+        bySlot[slot.id] = keys
+        all.addAll(keys)
     }
-    val all = ArrayList<String>(slotOf.size)
-    for (slot in slots) bySlot[slot.id]?.let(all::addAll)
-    return GlowBulbs(bySlot, all)
+    return GlowBulbs(bySlot, ArrayList(all))
 }
 
 @HiltViewModel(assistedFactory = PlayViewModel.Factory::class)
@@ -85,7 +103,7 @@ class PlayViewModel @AssistedInject constructor(
     adventures: AdventureRepository,
     slots: LightSlotRepository,
     private val player: ScenePlayer,
-    fxRepository: FxRepository,
+    private val fxRepository: FxRepository,
     bulbs: BulbRepository,
     private val mirror: LightMirror,
 ) : ViewModel() {
@@ -99,7 +117,7 @@ class PlayViewModel @AssistedInject constructor(
     val uiState: StateFlow<PlayUiState> = combine(
         adventures.observeAdventure(adventureId),
         scenes.observeAdventureScenes(adventureId),
-        combine(slots.observeSlots(), slots.observeRoomSlotId()) { s, r -> s to r },
+        combine(slots.observeSwatchSlots(), slots.observeRoomSlotId()) { s, r -> s to r },
         combine(scenes.observeAdventureLights(adventureId), scenes.observeAdventureEffects(adventureId)) { l, e -> l to e },
         player.active,
     ) { adventure, sceneList, (slotList, roomId), (lights, effects), active ->
@@ -139,7 +157,7 @@ class PlayViewModel @AssistedInject constructor(
     /** Library scenes for the "From library" picker. */
     val libraryScenes: StateFlow<List<SceneListItem>> = combine(
         scenes.observeLibraryScenes(),
-        slots.observeSlots(),
+        slots.observeSwatchSlots(),
         scenes.observeLibraryLights(),
         scenes.observeLibraryEffects(),
         slots.observeRoomSlotId(),
@@ -156,7 +174,7 @@ class PlayViewModel @AssistedInject constructor(
 
     /** The bulbs behind each group, so the active tile's glow can follow them. */
     val glowBulbs: StateFlow<GlowBulbs> = combine(
-        slots.observeSlots(),
+        slots.observeSwatchSlots(),
         slots.observeAssignments(),
         bulbs.observeBulbs(),
     ) { slotList, assignments, bulbList ->
@@ -169,6 +187,15 @@ class PlayViewModel @AssistedInject constructor(
     /** The FX library, as the board's buttons. */
     val fx: StateFlow<List<FxItem>> = fxRepository.observeFx().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** This adventure's favorite FX ids, in the order they were starred: the board shows these first. */
+    val favoriteFxIds: StateFlow<List<Long>> = fxRepository.observeFavorites(adventureId)
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Stars or un-stars an FX for this adventure's board. */
+    fun setFavorite(fxId: Long, favorite: Boolean) {
+        viewModelScope.launch { fxRepository.setFavorite(adventureId, fxId, favorite) }
+    }
+
     /** Fires an FX from the board; moving into a library scene plays this adventure's copy if it has one. */
     fun fireFx(item: FxItem) {
         viewModelScope.launch { player.fireFx(item, adventureId) }
@@ -176,7 +203,7 @@ class PlayViewModel @AssistedInject constructor(
 
     /** Plays the ghost tile's library scene again (it stays the ghost). */
     fun playGhost(librarySceneId: Long) {
-        viewModelScope.launch { player.replayFromFx(librarySceneId) }
+        viewModelScope.launch { player.replayFromFx(librarySceneId, adventureId) }
     }
 
     /** Applies a tile's scene. The tile turns active at once; failure badges follow if a bulb doesn't answer. */
@@ -193,8 +220,21 @@ class PlayViewModel @AssistedInject constructor(
         viewModelScope.launch { scenes.addLibraryScenesToAdventure(adventureId, librarySceneIds) }
     }
 
+    private val _deletions = Channel<DeletedItem>(Channel.BUFFERED)
+
+    /** Each delete, for the Undo snackbar. */
+    val deletions: Flow<DeletedItem> = _deletions.receiveAsFlow()
+
     fun deleteScene(sceneId: Long) {
-        viewModelScope.launch { scenes.deleteScene(sceneId) }
+        viewModelScope.launch {
+            val deleted = scenes.deleteScene(sceneId) ?: return@launch
+            _deletions.send(DeletedItem(deleted.scene.name) { viewModelScope.launch { scenes.restoreScene(deleted) } })
+        }
+    }
+
+    /** Copies a scene right after itself in this adventure. */
+    fun duplicateScene(sceneId: Long) {
+        viewModelScope.launch { scenes.duplicateScene(sceneId) }
     }
 
     fun reorder(orderedSceneIds: List<Long>) {

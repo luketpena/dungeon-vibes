@@ -22,22 +22,18 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.pulltorefresh.PullToRefreshBox
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -49,16 +45,14 @@ import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dungeonvibes.R
-import com.dungeonvibes.ui.common.NameKeyboardOptions
-import com.dungeonvibes.data.db.BulbEntity
 import com.dungeonvibes.light.LocalNetworkPermission
-import com.dungeonvibes.ui.common.ConfirmDialog
 
 private val OnlineColor = Color(0xFF43A047)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BulbsTab(
+    onOpenBulb: (Long) -> Unit,
     modifier: Modifier = Modifier,
     viewModel: BulbsViewModel = hiltViewModel(),
 ) {
@@ -72,8 +66,6 @@ fun BulbsTab(
         viewModel.refreshPermission()
         onPauseOrDispose { }
     }
-
-    var editing by remember { mutableStateOf<BulbEntity?>(null) }
 
     PullToRefreshBox(
         isRefreshing = state.isScanning,
@@ -92,20 +84,10 @@ fun BulbsTab(
                 item(key = "empty") { EmptyState() }
             }
             items(state.bulbs, key = { it.bulb.id }) { item ->
-                BulbRow(item = item, onClick = { editing = item.bulb })
+                BulbRow(item = item, onClick = { onOpenBulb(item.bulb.id) })
                 HorizontalDivider()
             }
         }
-    }
-
-    editing?.let { bulb ->
-        BulbDialog(
-            bulb = bulb,
-            onRename = { name -> viewModel.rename(bulb, name) },
-            onIdentify = { viewModel.identify(bulb) },
-            onRemove = { viewModel.remove(bulb) },
-            onDismiss = { editing = null },
-        )
     }
 }
 
@@ -130,7 +112,7 @@ private fun BulbRow(item: BulbItem, onClick: () -> Unit) {
                 text = stringResource(
                     R.string.bulb_status,
                     stringResource(if (item.isOnline) R.string.bulb_online else R.string.bulb_offline),
-                    item.slotName ?: stringResource(R.string.bulb_no_slot),
+                    groupLabel(item.groupNames),
                 ),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -139,66 +121,12 @@ private fun BulbRow(item: BulbItem, onClick: () -> Unit) {
     }
 }
 
-/** Rename, Identify and Remove for one bulb. */
+/** The bulb's top group (the one that wins it), with "+n" for the others it's in. */
 @Composable
-private fun BulbDialog(
-    bulb: BulbEntity,
-    onRename: (String) -> Unit,
-    onIdentify: () -> Unit,
-    onRemove: () -> Unit,
-    onDismiss: () -> Unit,
-) {
-    var name by rememberSaveable(bulb.id) { mutableStateOf(bulb.name) }
-    var confirmRemove by rememberSaveable(bulb.id) { mutableStateOf(false) }
-    val trimmed = name.trim()
-
-    if (confirmRemove) {
-        ConfirmDialog(
-            title = stringResource(R.string.bulb_remove_title, bulb.name),
-            message = stringResource(R.string.bulb_remove_message),
-            confirmLabel = stringResource(R.string.action_remove),
-            onConfirm = {
-                onRemove()
-                onDismiss()
-            },
-            onDismiss = { confirmRemove = false },
-        )
-        return
-    }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.bulb_dialog_title)) },
-        text = {
-            Column {
-                OutlinedTextField(
-                    value = name,
-                    onValueChange = { name = it },
-                    singleLine = true,
-                    label = { Text(stringResource(R.string.label_name)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = NameKeyboardOptions,
-                )
-                Spacer(Modifier.height(16.dp))
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OutlinedButton(onClick = onIdentify) { Text(stringResource(R.string.action_identify)) }
-                    OutlinedButton(onClick = { confirmRemove = true }) { Text(stringResource(R.string.action_remove)) }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(
-                onClick = {
-                    if (trimmed != bulb.name) onRename(trimmed)
-                    onDismiss()
-                },
-                enabled = trimmed.isNotEmpty(),
-            ) { Text(stringResource(R.string.action_save)) }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) { Text(stringResource(R.string.action_cancel)) }
-        },
-    )
+private fun groupLabel(names: List<String>): String = when (names.size) {
+    0 -> stringResource(R.string.bulb_no_slot)
+    1 -> names[0]
+    else -> stringResource(R.string.bulb_groups_more, names[0], names.size - 1)
 }
 
 @Composable

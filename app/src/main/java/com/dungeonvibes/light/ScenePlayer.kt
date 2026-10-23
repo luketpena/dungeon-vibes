@@ -5,12 +5,14 @@ import com.dungeonvibes.data.db.FxTransition
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneEntity
 import com.dungeonvibes.data.fx.FxItem
+import com.dungeonvibes.data.fx.FxRepository
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
-import com.dungeonvibes.light.fx.EffectGroup
+import com.dungeonvibes.data.scene.withRestingColors
 import com.dungeonvibes.light.fx.EffectRunner
 import com.dungeonvibes.light.fx.FxFire
 import com.dungeonvibes.light.fx.FxTarget
+import com.dungeonvibes.light.fx.effectGroupsFor
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import javax.inject.Inject
@@ -32,6 +34,11 @@ data class ActiveScene(
     val failedSlotIds: Set<Long> = emptySet(),
     /** An FX moved into this (library) scene: an adventure without it shows it as a ghost tile. */
     val fromFx: Boolean = false,
+    /**
+     * The adventure it's playing in: an adventure scene's own, or the adventure an FX or ghost tile
+     * played a library scene from. Null for a library scene played from the library.
+     */
+    val adventureId: Long? = null,
 )
 
 /**
@@ -53,6 +60,10 @@ class ScenePlayer @Inject constructor(
     private val scenes: SceneRepository,
     private val lights: LightController,
     private val effects: EffectRunner,
+    /** Told which bulbs answered each scene (the default serves tests). */
+    private val reachability: BulbReachability = BulbReachability(),
+    /** Looks up scenes' intro FX (null in tests that don't need them: scenes then play without). */
+    private val fxLibrary: FxRepository? = null,
 ) {
     private val _active = MutableStateFlow<ActiveScene?>(null)
 
@@ -90,6 +101,7 @@ class ScenePlayer @Inject constructor(
      * exactly when it's the default scene (remembering what it replaced, to go back to).
      */
     private fun enter(sceneId: Long, isDefault: Boolean) {
+        touched = true
         if (isDefault) {
             val current = _active.value
             if (current != null && current.sceneId != sceneId && !_room.value.defaultOn) beforeDefault = current
@@ -97,6 +109,28 @@ class ScenePlayer @Inject constructor(
             beforeDefault = null
         }
         _room.value = RoomLights(lightsOff = false, defaultOn = isDefault)
+    }
+
+    /** True once anything has changed the lights since launch (then bulb reports no longer apply). */
+    @Volatile
+    private var touched = false
+
+    /**
+     * At launch, before anything has been played: if every assigned bulb that answered the
+     * startup scan said it was off, the lights menu starts in its "off" state (Turn on brings the
+     * default lighting). [power] is bulb id → reported power.
+     */
+    suspend fun syncWithBulbs(power: Map<Long, Boolean>) {
+        if (touched || power.isEmpty()) return
+        var answered = 0
+        for (target in scenes.applyTargets(NO_SCENE)) {
+            val on = power[target.bulbId] ?: continue
+            if (on) return
+            answered++
+        }
+        if (answered == 0 || touched) return
+        beforeOff = null
+        _room.value = RoomLights(lightsOff = true, defaultOn = false)
     }
 
     /** The default scene's id, once known (looked up when first needed). */
@@ -114,6 +148,7 @@ class ScenePlayer @Inject constructor(
     /** Every assigned bulb fades off; Turn on brings back whatever was showing. */
     suspend fun turnOffLights() {
         if (_room.value.lightsOff) return
+        touched = true
         beforeOff = _active.value
         allOff(TURN_OFF_FADE_MS)
         _room.value = RoomLights(lightsOff = true, defaultOn = false)
@@ -127,7 +162,11 @@ class ScenePlayer @Inject constructor(
         if (!_room.value.lightsOff) return
         val back = beforeOff
         beforeOff = null
-        if (back != null) play(back.sceneId, fadeOverrideMs = null, fromFx = back.fromFx) else play(defaultScene(), null, false)
+        if (back != null) {
+            play(back.sceneId, fadeOverrideMs = null, fromFx = back.fromFx, adventureId = back.adventureId)
+        } else {
+            play(defaultScene(), null, false)
+        }
     }
 
     /**
@@ -145,7 +184,7 @@ class ScenePlayer @Inject constructor(
         val back = beforeDefault
         beforeDefault = null
         if (back != null) {
-            play(back.sceneId, fadeOverrideMs = null, fromFx = back.fromFx)
+            play(back.sceneId, fadeOverrideMs = null, fromFx = back.fromFx, adventureId = back.adventureId)
         } else {
             beforeOff = null
             allOff(TURN_OFF_FADE_MS)
@@ -173,23 +212,52 @@ class ScenePlayer @Inject constructor(
      * instant). Returns null if the scene doesn't exist or a newer apply replaced this one before it
      * finished; otherwise which bulbs didn't confirm.
      */
-    suspend fun play(sceneId: Long): ApplyResult? = play(sceneId, fadeOverrideMs = null, fromFx = false)
+    suspend fun play(sceneId: Long): ApplyResult? {
+        if (playIntro(sceneId)) return null
+        return play(sceneId, fadeOverrideMs = null, fromFx = false)
+    }
+
+    /**
+     * FX_REQUIREMENTS.md → Intro FX: if the scene opens with an FX that can play, marks the scene
+     * active and plays the FX from whatever the bulbs show now; as its final release starts the
+     * scene is applied with that release as its fade (its own fade and the FX's transition are
+     * set aside), then its effects start as usual. Returns false when there's no intro to play.
+     * Another scene tapped during the FX stops it, and that scene plays instead.
+     */
+    private suspend fun playIntro(sceneId: Long): Boolean {
+        val library = fxLibrary ?: return false
+        val scene = scenes.getScene(sceneId) ?: return false
+        val introId = scene.introFxId ?: return false
+        val item = library.get(introId) ?: return false
+        // Targets come from what's showing now, before this scene takes over.
+        val targets = fxTargets(item) ?: return false
+        enter(sceneId, scene.isDefault)
+        _active.value = ActiveScene(sceneId, adventureId = scene.adventureId)
+        val fx = item.fx
+        val land: suspend (Int) -> Unit = { ms ->
+            // Only if this scene is still the one being introduced (no other tap since).
+            if (_active.value?.sceneId == sceneId) play(sceneId, fadeOverrideMs = ms, fromFx = false)
+        }
+        effects.fire(FxFire(fx.primitive, fx.pulse, fx.flicker, fx.spread, fx.waveOffsetMs, targets, land, fx.strobe, fx.spin))
+        return true
+    }
 
     /** Plays a library scene an FX moved into again, keeping it shown as that adventure's ghost tile. */
-    suspend fun replayFromFx(sceneId: Long): ApplyResult? = play(sceneId, fadeOverrideMs = null, fromFx = true)
+    suspend fun replayFromFx(sceneId: Long, adventureId: Long? = null): ApplyResult? =
+        play(sceneId, fadeOverrideMs = null, fromFx = true, adventureId = adventureId)
 
     /**
      * [play], with the fade replaced by [fadeOverrideMs] (an FX's release, so the FX lands in the
      * scene) and the scene marked as reached [fromFx].
      */
-    private suspend fun play(sceneId: Long, fadeOverrideMs: Int?, fromFx: Boolean): ApplyResult? {
+    private suspend fun play(sceneId: Long, fadeOverrideMs: Int?, fromFx: Boolean, adventureId: Long? = null): ApplyResult? {
         val scene = scenes.getScene(sceneId) ?: return null
         if (scene.isDefault) defaultSceneId = scene.id
         enter(sceneId, scene.isDefault)
-        _active.value = ActiveScene(sceneId, fromFx = fromFx)
+        _active.value = ActiveScene(sceneId, fromFx = fromFx, adventureId = adventureId ?: scene.adventureId)
         // The previous scene's effects stop where they are; this scene fades in from there.
         effects.stop(settleFadeMs = -1)
-        val (targets, sceneEffects, roomSlotId) = sceneTargets(scene)
+        val (targets, sceneEffects) = sceneTargets(scene)
         val fadeMs = fadeOverrideMs ?: scene.fadeMs
         val apply = lights.applyScene(targets, fadeMs)
         val result = try {
@@ -199,31 +267,29 @@ class ScenePlayer @Inject constructor(
             currentCoroutineContext().ensureActive()
             return null
         }
+        reachability.onApply(targets.map { it.bulbId }, result.failedBulbIds)
         // Only record failures if this scene is still the active one (a later tap may have won).
         _active.update { current ->
             if (current?.sceneId == sceneId) current.copy(failedSlotIds = result.failedSlotIds) else current
         }
-        // Start this scene's effects, unless another scene has been tapped meanwhile.
-        if (_active.value?.sceneId == sceneId) {
-            if (roomSlotId != null) {
-                startRoomEffects(roomSlotId, targets, sceneEffects[roomSlotId], fadeMs)
-            } else if (!scene.allLightsOn) {
-                startEffects(targets, sceneEffects, fadeMs)
-            }
+        // Start this scene's effects, unless another scene has been tapped meanwhile. With All lights
+        // on, the All-lights slot owns every bulb (not set individually), so its effects run as one
+        // group over the whole room in name order, and Wave or Independent spread across it.
+        if (_active.value?.sceneId == sceneId && sceneEffects.isNotEmpty()) {
+            val groups = effectGroupsFor(targets, sceneEffects::get)
+            // The bulbs confirmed the scene, but its fade is still playing out on them: let it finish.
+            if (groups.isNotEmpty()) effects.start(groups, EFFECT_START_FADE_MS, startDelayMs = fadeMs)
         }
         return result
     }
 
     /**
-     * What applying [scene] sends each bulb, its effects, and (with All lights on) the room slot.
-     * With All lights on, every bulb shares the All-lights settings (the hidden room slot's).
+     * What applying [scene] sends each bulb (its individual light, All lights, or its highest lit
+     * group; see SceneResolver), and the scene's effects per slot.
      */
-    private suspend fun sceneTargets(scene: SceneEntity): Triple<List<BulbApplyTarget>, Map<Long, GroupEffects>, Long?> {
-        val roomSlotId = if (scene.allLightsOn) scenes.roomSlotId() else null
+    private suspend fun sceneTargets(scene: SceneEntity): Pair<List<BulbApplyTarget>, Map<Long, GroupEffects>> {
         val sceneEffects = scenes.getSceneEffects(scene.id)
-        val effectsOf: (Long) -> GroupEffects? =
-            if (scene.allLightsOn) { _ -> roomSlotId?.let(sceneEffects::get) } else sceneEffects::get
-        return Triple(withRestingColors(scenes.applyTargets(scene.id), effectsOf), sceneEffects, roomSlotId)
+        return scenes.applyTargets(scene.id).withRestingColors(sceneEffects::get) to sceneEffects
     }
 
     /* FX (FX_REQUIREMENTS.md → Firing an FX) */
@@ -236,15 +302,39 @@ class ScenePlayer @Inject constructor(
      * FX has no bulbs to play on.
      */
     suspend fun fireFx(item: FxItem, adventureId: Long?, withTransition: Boolean = true): Boolean {
-        if (item.hasNoTargets) return false
+        val targets = fxTargets(item) ?: return false
+        val fx = item.fx
+        val libraryId = fx.transitionSceneId
+        var onRelease: (suspend (Int) -> Unit)? = null
+        if (withTransition) {
+            if (fx.transition == FxTransition.LIGHTS_OFF) {
+                onRelease = { ms: Int -> lightsOff(ms) }
+            } else if (fx.transition == FxTransition.SCENE && libraryId != null) {
+                // A Scene transition without its scene (deleted) is a Return.
+                onRelease = { ms: Int -> moveInto(libraryId, adventureId, ms) }
+            }
+        }
+        effects.fire(FxFire(fx.primitive, fx.pulse, fx.flicker, fx.spread, fx.waveOffsetMs, targets, onRelease, fx.strobe, fx.spin))
+        return true
+    }
+
+    /**
+     * [item]'s targets as the active scene shows them (or all off, before any scene), in the order
+     * Wave and Spin run across them; null when it has no bulbs to play on.
+     */
+    private suspend fun fxTargets(item: FxItem): List<FxTarget>? {
+        if (item.hasNoTargets) return null
         val fx = item.fx
         val scene = _active.value?.sceneId?.let { scenes.getScene(it) }
         // Every assigned bulb, as the active scene has it (or all off, before any scene).
         val all = if (scene != null) sceneTargets(scene).first else scenes.applyTargets(NO_SCENE)
-        val chosen = if (fx.targetAll) all else all.filter { it.slotId in item.targetSlotIds }
-        if (chosen.isEmpty()) return false
-        // Wave runs across the targets by bulb name.
-        val ordered = chosen.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, BulbApplyTarget::bulbName))
+        // A group target reaches every bulb in the group, whichever group wins it in the scene.
+        val chosen = if (fx.targetAll) all else all.filter { target -> target.groupIds.any { it in item.targetSlotIds } }
+        if (chosen.isEmpty()) return null
+        // Wave and Spin run across the targets in room order (groups in order, each group's bulbs
+        // in its bulb order); aimed at one group, in that group's own order.
+        val single = if (!fx.targetAll && item.targetSlotIds.size == 1) item.targetSlotIds.first() else null
+        val ordered = if (single == null) chosen else chosen.sortedBy { it.positions[single] ?: Int.MAX_VALUE }
         val targets = ArrayList<FxTarget>(ordered.size)
         for (target in ordered) {
             val state = target.toLightStateOrNull()
@@ -256,18 +346,7 @@ class ScenePlayer @Inject constructor(
                 },
             )
         }
-        val libraryId = fx.transitionSceneId
-        var onRelease: (suspend (Int) -> Unit)? = null
-        if (withTransition) {
-            if (fx.transition == FxTransition.LIGHTS_OFF) {
-                onRelease = { ms: Int -> lightsOff(ms) }
-            } else if (fx.transition == FxTransition.SCENE && libraryId != null) {
-                // A Scene transition without its scene (deleted) is a Return.
-                onRelease = { ms: Int -> moveInto(libraryId, adventureId, ms) }
-            }
-        }
-        effects.fire(FxFire(fx.primitive, fx.pulse, fx.flicker, fx.spread, fx.waveOffsetMs, targets, onRelease))
-        return true
+        return targets
     }
 
     /**
@@ -275,6 +354,7 @@ class ScenePlayer @Inject constructor(
      * Turn on brings up the default lighting (owner decision).
      */
     private suspend fun lightsOff(fadeMs: Int) {
+        touched = true
         allOff(fadeMs)
         beforeOff = null
         _room.value = RoomLights(lightsOff = true, defaultOn = false)
@@ -286,7 +366,7 @@ class ScenePlayer @Inject constructor(
         if (copy != null) {
             play(copy, fadeOverrideMs = fadeMs, fromFx = false)
         } else {
-            play(libraryId, fadeOverrideMs = fadeMs, fromFx = true)
+            play(libraryId, fadeOverrideMs = fadeMs, fromFx = true, adventureId = adventureId)
         }
     }
 
@@ -297,63 +377,6 @@ class ScenePlayer @Inject constructor(
         brightness = 0f,
         kelvin = if (target.mode == LightMode.COLOR) null else (target.kelvin ?: 2_700),
     )
-
-    /**
-     * A Multi-color group fades in to its first palette color (at that color's brightness) rather
-     * than its (hidden) single color, so its effects pick up from there without a jump.
-     */
-    private fun withRestingColors(
-        targets: List<BulbApplyTarget>,
-        effectsOf: (Long) -> GroupEffects?,
-    ): List<BulbApplyTarget> {
-        val count = targets.size
-        val result = ArrayList<BulbApplyTarget>(count)
-        for (i in 0 until count) {
-            val target = targets[i]
-            val fx = effectsOf(target.slotId)
-            if (!target.isOn || fx == null || !fx.runsColorShift) {
-                result.add(target)
-                continue
-            }
-            val first = fx.palette[0]
-            result.add(
-                target.copy(mode = first.mode, hue = first.hue, saturation = first.saturation, kelvin = first.kelvin, brightness = first.brightness),
-            )
-        }
-        return result
-    }
-
-    /** Groups that are lit and have effects, with their bulbs in name order (targets come sorted). */
-    private fun startEffects(targets: List<BulbApplyTarget>, sceneEffects: Map<Long, GroupEffects>, sceneFadeMs: Int) {
-        if (sceneEffects.isEmpty()) return
-        val bulbsBySlot = LinkedHashMap<Long, MutableList<BulbAddress>>()
-        val baseBySlot = HashMap<Long, LightState>()
-        for (target in targets) {
-            val fx = sceneEffects[target.slotId] ?: continue
-            if (!fx.hasAny) continue
-            val base = target.toLightStateOrNull() ?: continue
-            baseBySlot[target.slotId] = base
-            bulbsBySlot.getOrPut(target.slotId) { ArrayList(2) }.add(target.toAddress())
-        }
-        if (bulbsBySlot.isEmpty()) return
-        val groups = ArrayList<EffectGroup>(bulbsBySlot.size)
-        for ((slotId, bulbs) in bulbsBySlot) {
-            groups.add(EffectGroup(slotId, baseBySlot.getValue(slotId), sceneEffects.getValue(slotId), bulbs))
-        }
-        // The bulbs confirmed the scene, but its fade is still playing out on them: let it finish.
-        effects.start(groups, EFFECT_START_FADE_MS, startDelayMs = sceneFadeMs)
-    }
-
-    /**
-     * All lights: the room's effects run as one group over every bulb, in name order, so an
-     * Independent or Wave spread covers the whole room rather than each group separately.
-     */
-    private fun startRoomEffects(roomSlotId: Long, targets: List<BulbApplyTarget>, fx: GroupEffects?, sceneFadeMs: Int) {
-        if (fx == null || !fx.hasAny || targets.isEmpty()) return
-        val base = targets[0].toLightStateOrNull() ?: return
-        val bulbs = targets.sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER, BulbApplyTarget::bulbName)).map { it.toAddress() }
-        effects.start(listOf(EffectGroup(roomSlotId, base, fx, bulbs)), EFFECT_START_FADE_MS, startDelayMs = sceneFadeMs)
-    }
 
     companion object {
         /** No scene: apply targets come back with every bulb off. */

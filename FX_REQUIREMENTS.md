@@ -14,7 +14,7 @@ Same rules as REQUIREMENTS.md: build in the phases below, stop after each with a
 
 ## In scope
 
-- Three effect layers per group in a scene: **Color shift**, **Brightness shift**, **Flashes**. Any combination, at most one of each.
+- Four effect layers per group in a scene: **Color shift**, **Brightness shift**, **Flashes**, **Spin** (Spin added Oct 23, 2026). Any combination, at most one of each.
 - **Spread** per layer: Together, Independent, or Wave.
 - Live preview of effects in the scene editor.
 - Effects running when a scene is applied, including with the screen off or another app in front.
@@ -54,7 +54,7 @@ Moves the group's color through a palette. In the editor this is the group's **M
 | Control | Range | Default |
 |---|---|---|
 | Palette | 2–8 colors, each a color (hue, saturation) with its own brightness; no white mode (colors made before version 7 may still be whites until edited) | Base color plus one more, at the group's brightness |
-| Order | In sequence (loops) · Random | In sequence |
+| Order | In sequence (loops) · Ping-pong (up then back, owner request Oct 23, 2026) · Random | In sequence |
 | Blend time, min–max | 0–60 s | 2–4 s |
 | Hold time, min–max | 0–60 s | 1–3 s |
 
@@ -75,22 +75,37 @@ Moves the group's brightness inside a range.
 - Flicker glides to a new random level in the range at random intervals from the speed range, never parking between changes (owner feedback after FX1: stepped flicker looked choppy).
 - Brightness shift replaces the base brightness.
 
+### Spin (owner request, Oct 23, 2026)
+
+One extra color layered on top of whatever else the group does: it steps through the group's bulbs in their order, lighting each with an Attack-Hold-Release envelope as its turn comes, lap after lap.
+
+| Control | Range | Default |
+|---|---|---|
+| Color | One color or white | Cyan |
+| Brightness | 0–100 % (brightest wins over what's underneath) | 100 % |
+| Time to the next bulb | 0.05–5 s | 0.3 s |
+| Pause after each lap | 0–60 s | 0 s |
+| Direction | Forward (the group's order) · Reverse (owner request, Oct 23, 2026) | Forward |
+| Attack · Hold · Release | 0–10 s each | 0.1 · 0.1 · 0.5 s |
+
+- A release longer than a step leaves a trail behind the moving light. Spread doesn't apply: the order is the point.
+
 ### Flashes
 
 Occasional pulses that take over the group's color and brightness while they play.
 
 | Control | Range | Default |
 |---|---|---|
+| Style | Single · Flicker | Single |
 | Flash color | One color or white | White, 6500 K |
 | Peak brightness, min–max | 0–100 % | 100–100 % |
 | Attack | 0–10 s | 0.05 s |
 | Hold | 0–10 s | 0.1 s |
 | Release | 0–10 s | 0.3 s |
 | Gap between flashes, min–max | 0.2–300 s, from the end of one flash (or burst) to the start of the next | 5–20 s |
-| Pulses per burst, min–max | 1–5 | 1–1 |
-| Pulse spacing (within a burst), min–max | 0.05–2 s | 0.1–0.3 s |
 
-- Each pulse picks its peak from the peak range. In a burst of two or more pulses, one pulse at a random position reaches the top of the range and the others land anywhere in it, so rolling lightning has one big strike among dimmer ones (owner request after FX1).
+- **Single**: each flash is one pulse, its peak picked anywhere in the peak range.
+- **Flicker** (owner request, Oct 22, 2026; replaces the pulses-per-burst and pulse-spacing controls): each flash is a burst of 2 or 3 pulses (picked at random), 5–10 ms apart (end of one pulse to the start of the next). The last pulse is always the main strike and reaches the top of the peak range (owner request: its fade is the one you see); the ones before it are faint echoes at 10–20 % of its strength (they move the light 10–20 % of the way toward the flash color and peak, so they never dim a bright scene). Flicker hides Attack and Hold (they only shape Single flashes): each snaps on and holds 40 ms; every pulse but the last dies away in 60 ms so the next can hit, and the last fades over the Release setting (owner request). During any flash's release the scene's color returns faster than its brightness (color follows the envelope squared), because bulbs show low saturation as near-white and an even color fade looked white until it snapped to the color at the end (owner feedback).
 
 ## How the layers mix
 
@@ -109,7 +124,7 @@ Each layer has its own Spread:
 
 - **Together** — every bulb in the group follows one shared timeline.
 - **Independent** — each bulb runs its own random timeline (fire, a forest, lightning bugs).
-- **Wave** — one shared timeline, each bulb delayed by a set offset (0.05–10 s, default 0.5 s) after the previous one. Bulbs are ordered by name within the group.
+- **Wave** — one shared timeline, each bulb delayed by a set offset (0.05–10 s, default 0.5 s) after the previous one. Bulbs follow the group's own order (Setup → Groups → the group's page; owner request, Oct 23, 2026); All lights goes group by group in Setup's order.
 
 Groups with one bulb behave the same under all three.
 
@@ -133,7 +148,7 @@ Groups with one bulb behave the same under all three.
 
 ## Scene editor
 
-- Each group's expanded panel offers **Color | White | Multi-color** (Multi-color is the Color shift layer). Under it, the mode's settings sit in outlined boxes: Color → a **Color** box (hue, saturation, brightness); White → a **Color** box (temperature, brightness); Multi-color → a **Color** box (palette swatches with add/remove, then the chosen color's hue, saturation and brightness with a lock) and a **Behavior** box (order, spread, blend, hold). Then an **Effects** section with Brightness shift and Flashes as switchable boxes, each showing its controls when on.
+- Each group's expanded panel offers **Color | White | Multi-color** (Multi-color is the Color shift layer). Under it, the mode's settings sit in outlined boxes: Color → a **Color** box (hue, saturation, brightness); White → a **Color** box (temperature, brightness); Multi-color → a **Color** box (palette swatches with add/remove, then the chosen color's hue, saturation and brightness with a lock) and a **Behavior** box (order, spread, blend, hold). Then an **Effects** section with Brightness shift, Flashes and Spin as switchable boxes, each showing its controls when on.
 - A group that's off shows its effects disabled (kept, but not editable until it's on).
 - With **live preview** on, changing any effect setting runs that group's effects live on its bulbs; turning live preview off stops them and leaves the base.
 - **Opening the editor activates the scene** (owner decision, replacing "opening the editor doesn't touch the bulbs"): whatever was playing stops, the scene becomes the active scene and is shown in full, effects included. Closing the editor leaves it playing.
@@ -174,10 +189,10 @@ An FX with group targets but none left (all deleted) can't be fired until target
 
 Each primitive's ranges follow the layers above; *min–max* ranges pick a fresh value each time.
 
-- **Pulse** — the Flashes envelope as a one-shot: color (color or white), peak brightness min–max, Attack, Hold, Release, pulses per burst min–max, pulse spacing min–max, with one full-strength pulse per burst. **Channels**: which of Color (hue and white point), Saturation and Brightness the pulse moves (at least one); a brightness-only pulse keeps the room's colors, a color-only pulse tints without brightening. The release is curved (it stays near the pulse's color, then drops quickly at the end). Brightest wins: a pulse lifts each bulb toward its peak but never dims one that is already brighter (e.g. mid-breath). A slow Pulse (long attack and release, one pulse) is a "shift": the room glides to a look, holds and glides back or on.
+- **Pulse** — the Flashes envelope as a one-shot: color (color or white), peak brightness min–max, Attack, Hold, Release, pulses per burst min–max, pulse spacing min–max, with one full-strength pulse per burst. **Channels**: which of Color (hue and white point), Saturation and Brightness the pulse moves (at least one); a brightness-only pulse keeps the room's colors, a color-only pulse tints without brightening. The release is gently curved (it lingers a little on the pulse's color, then drops faster at the end; softened after owner feedback). Brightest wins: a pulse lifts each bulb toward its peak but never dims one that is already brighter (e.g. mid-breath). A slow Pulse (long attack and release, one pulse) is a "shift": the room glides to a look, holds and glides back or on.
 - **Flicker** — a failing light: for a duration (0.2–30 s) the brightness drops by a random amount up to a depth (0–100 %) at random moments (change interval min–max, 0.1–1 s), as hard cuts, recovering between them. At most 10 changes a second per bulb. Ending in Lights off makes a light that dies out.
-- **Strobe** (FX4b) — even on/off flashes in a color for a duration, at a rate of up to 4 per second (capped for photosensitive viewers, with a note in the editor).
-- **Spin** (FX4b) — a fast run around the hue wheel (or from one color to another) for a duration and number of turns, optionally with brightness held at a level.
+- **Strobe** (built Oct 23, 2026) — even on/off flashes in a color and brightness for a duration, at 0.5–4 flashes a second (capped for photosensitive viewers), with hard cuts. Off is dark. The editor's photosensitivity note is deferred (owner decision, Oct 23, 2026).
+- **Spin** (redefined by the owner, Oct 23, 2026) — a color stepping through the target bulbs in order (groups in Setup's order, each group's bulbs in its order) at a set time per bulb, for 1–20 laps, Forward or Reverse, each bulb lighting with an Attack-Hold-Release envelope. Spread doesn't apply.
 
 ### Firing an FX
 
@@ -192,19 +207,20 @@ Each primitive's ranges follow the layers above; *min–max* ranges pick a fresh
 
 ### Intro FX (FX4b)
 
-- A scene (library or adventure) can pick an **intro FX** from the library (or none).
+- A scene (library or adventure) can pick an **intro FX** from the library (or none). In the editor it sits in an **Introduction** box above the lights with the scene's Fade in (owner request, Oct 23, 2026); tapping it opens a dialog to pick one from a scrolling list of the library or clear it. The default lighting has no intro FX.
 - Applying the scene plays its intro FX on the FX's targets from whatever the bulbs are doing, and lands in the scene exactly like "Into a library scene" above (the FX's own transition setting is ignored): bulbs rise to the FX's peak, then come down into the scene, and the scene's effects start after.
 - Intro FX is copied, reset and promoted with its scene; deleting the FX clears it from scenes.
 
 ### Where it lives
 
-- **Library**: the Library tab (called Scenes before FX4a) gets **Scenes | FX** at the top. The FX list shows each FX's name, primitive and a preview swatch, with a try button, drag to reorder and delete (with confirmation). Tapping one opens the **FX editor**: name, primitive and its controls (the same slider and color controls as the scene editor), targets, spread, transition, and **Try it** (fires on the bulbs; Return isn't needed to try).
-- **Board**: the play view's title bar gets an **FX** button that opens the board: a sheet of buttons on phones, a column beside the tiles on tablets (wide windows). One button per FX in library order; tap fires.
+- **Library**: the Library tab (called Scenes before FX4a) gets **Scenes | FX** at the top. The FX list shows each FX's name, primitive and a preview swatch, with a try button, drag to reorder, duplicate, and delete (with confirmation, then Undo). Tapping one opens the **FX editor**: name, primitive and its controls (the same slider and color controls as the scene editor), targets, spread, transition, and **Try it** (fires on the bulbs; Return isn't needed to try).
+- **Board**: the play view's title bar gets an **FX** button that opens the board: a sheet of buttons on phones, a column beside the tiles on tablets (wide windows). Each adventure can star its own favorite FX (owner request, Oct 23, 2026): the board opens on them, in the order starred, and **All FX** shows the whole library in library order with a star by each. With no favorites it shows the whole library and a hint to star some. Tap fires.
 
 ### FX data
 
 - `fx`: name, sort order, primitive, its settings (stored like layer settings), targets-all flag, spread and wave delay, transition kind, transition scene (a library scene; deleting it falls back to Return), created/updated.
 - `fx_targets`: the FX's groups. Deleting a group removes it from every FX.
+- `adventure_fx` (database version 10): each adventure's favorite FX and their order. Deleting the adventure or the FX removes the row.
 - `scenes.introFxId` (FX4b): the scene's intro FX; deleting the FX clears it.
 - New database versions upgrade without losing data, with migration tests.
 
@@ -225,7 +241,7 @@ Each phase ends with all tests passing and a checklist on the owner's real bulbs
 
 1. **FX1 — Engine and data.** Effect data model and migration, copy/reset/promote rules, the mixing engine with spread, sending at ≤5 updates/s. A debug-screen harness that runs hard-coded layers on real bulbs.
     - [ ] Flicker on one group looks like fire-ish flicker; independent spread makes two bulbs differ.
-    - [ ] A flash with a sharp attack and short release reads as a lightning strike over a dim base; 3-pulse bursts read as rolling lightning.
+    - [ ] A flash with a sharp attack and short release reads as a lightning strike over a dim base; Flicker flashes read as rolling lightning.
     - [ ] A slow, soft, independent flash over a dark base reads as lightning bugs.
     - [ ] Upgrading from the MVP keeps all existing scenes and adventures.
 2. **FX2 — Editor.** Effects section with all three layers and live preview; ✦ and palette swatches on cards and tiles.

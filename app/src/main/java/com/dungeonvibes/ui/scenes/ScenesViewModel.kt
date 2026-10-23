@@ -11,6 +11,7 @@ import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
 import com.dungeonvibes.light.ScenePlayer
+import com.dungeonvibes.ui.common.DeletedItem
 import com.dungeonvibes.ui.common.LightColors
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
@@ -19,6 +20,7 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
@@ -27,13 +29,29 @@ import kotlinx.coroutines.launch
  * One lit group in a scene's palette. Groups that are off in the scene get no swatch. A group
  * running Color shift lists its palette in [shiftColors].
  */
-/** One lit group's swatch; [hasEffects] puts a ✦ inside it. */
+/** One lit group's swatch; [hasEffects] (Brightness shift or Flashes, not Multi-color) puts a ✦ inside it. */
 data class SceneSwatch(
     val slotId: Long,
     val color: Color,
     val shiftColors: List<Color> = emptyList(),
     val hasEffects: Boolean = false,
 )
+
+/**
+ * The colors a scene's play mark spins in: each swatch's color, or its whole Multi-color palette
+ * (a Multi-color group's single color is hidden and usually the default warm white, which showed
+ * as an orange spinner).
+ */
+fun List<SceneSwatch>.markColors(): List<Color> {
+    val count = size
+    if (count == 0) return emptyList()
+    val result = ArrayList<Color>(count + 2)
+    for (i in 0 until count) {
+        val swatch = this[i]
+        if (swatch.shiftColors.size >= 2) result.addAll(swatch.shiftColors) else result.add(swatch.color)
+    }
+    return result
+}
 
 data class SceneListItem(
     val scene: SceneEntity,
@@ -54,9 +72,10 @@ sealed interface ScenesEvent {
 }
 
 /**
- * A scene's palette: one swatch per lit group, in group order; off groups are left out so big
- * setups don't fill cards with empty circles. A scene with All lights on shows one swatch, for the
- * look every bulb shares. Shared with the adventure tiles.
+ * A scene's palette: one swatch per lit slot, in precedence order ([slots]: individual lights,
+ * then groups in their order); off ones are left out so big setups don't fill cards with empty
+ * circles. A scene with All lights on shows its lit individual lights, then one swatch for the look
+ * every other bulb shares. Shared with the adventure tiles.
  */
 fun buildSwatches(
     slots: List<LightSlotEntity>,
@@ -69,12 +88,24 @@ fun buildSwatches(
     val lights = lightsByScene[sceneId]
     val effects = effectsByScene[sceneId]
     if (allLightsOn) {
+        val result = ArrayList<SceneSwatch>(2)
+        // Individual lights still win under All lights.
+        if (lights != null) {
+            for (slot in slots) {
+                if (slot.bulbId == null) continue
+                val light = lights[slot.id] ?: continue
+                if (!light.isOn) continue
+                val own = effects?.get(slot.id)
+                result.add(SceneSwatch(slot.id, LightColors.displayColor(light), shiftColorsOf(own), own?.hasEffectLayers == true))
+            }
+        }
         // The room's settings, or the default warm white if they were never set.
         val roomId = roomSlotId ?: ROOM_UNKNOWN
         val room = lights?.get(roomId)
         val color = if (room != null) LightColors.displayColor(room) else DefaultSwatch
         val roomEffects = effects?.get(roomId)
-        return listOf(SceneSwatch(roomId, color, shiftColorsOf(roomEffects), roomEffects?.hasAny == true))
+        result.add(SceneSwatch(roomId, color, shiftColorsOf(roomEffects), roomEffects?.hasEffectLayers == true))
+        return result
     }
     if (lights == null) return emptyList()
     val count = slots.size
@@ -84,7 +115,7 @@ fun buildSwatches(
         val light = lights[slotId] ?: continue
         if (!light.isOn) continue
         val groupEffects = effects?.get(slotId)
-        swatches.add(SceneSwatch(slotId, LightColors.displayColor(light), shiftColorsOf(groupEffects), groupEffects?.hasAny == true))
+        swatches.add(SceneSwatch(slotId, LightColors.displayColor(light), shiftColorsOf(groupEffects), groupEffects?.hasEffectLayers == true))
     }
     return swatches
 }
@@ -133,7 +164,7 @@ class ScenesViewModel @Inject constructor(
 
     val uiState: StateFlow<ScenesUiState> = combine(
         scenes.observeLibraryScenes(),
-        slots.observeSlots(),
+        slots.observeSwatchSlots(),
         scenes.observeLibraryLights(),
         scenes.observeLibraryEffects(),
         slots.observeRoomSlotId(),
@@ -152,14 +183,32 @@ class ScenesViewModel @Inject constructor(
         ScenesUiState(items, isLoaded = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ScenesUiState())
 
+    /** The scene playing, for its row's spinner (null when none, or after the lights go off). */
+    val activeSceneId: StateFlow<Long?> = player.active
+        .map { it?.sceneId }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val _events = Channel<ScenesEvent>(Channel.BUFFERED)
     val events: Flow<ScenesEvent> = _events.receiveAsFlow()
 
     /** Creates an empty library scene (every slot off) and returns its id. */
     suspend fun createScene(name: String): Long = scenes.createLibraryScene(name)
 
+    private val _deletions = Channel<DeletedItem>(Channel.BUFFERED)
+
+    /** Each delete, for the Undo snackbar. */
+    val deletions: Flow<DeletedItem> = _deletions.receiveAsFlow()
+
     fun delete(sceneId: Long) {
-        viewModelScope.launch { scenes.deleteScene(sceneId) }
+        viewModelScope.launch {
+            val deleted = scenes.deleteScene(sceneId) ?: return@launch
+            _deletions.send(DeletedItem(deleted.scene.name) { viewModelScope.launch { scenes.restoreScene(deleted) } })
+        }
+    }
+
+    /** Copies the scene right after itself in the library. */
+    fun duplicate(sceneId: Long) {
+        viewModelScope.launch { scenes.duplicateScene(sceneId) }
     }
 
     fun reorder(orderedSceneIds: List<Long>) {

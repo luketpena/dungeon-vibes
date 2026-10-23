@@ -6,11 +6,15 @@ import com.dungeonvibes.data.fx.FxItem
 import com.dungeonvibes.data.fx.FxRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
 import com.dungeonvibes.light.ScenePlayer
+import com.dungeonvibes.ui.common.DeletedItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -38,8 +42,21 @@ class FxLibraryViewModel @Inject constructor(
 
     suspend fun create(name: String): Long = fxRepository.create(name)
 
+    private val _deletions = Channel<DeletedItem>(Channel.BUFFERED)
+
+    /** Each delete, for the Undo snackbar. */
+    val deletions: Flow<DeletedItem> = _deletions.receiveAsFlow()
+
     fun delete(fxId: Long) {
-        viewModelScope.launch { fxRepository.delete(fxId) }
+        viewModelScope.launch {
+            val deleted = fxRepository.delete(fxId) ?: return@launch
+            _deletions.send(DeletedItem(deleted.fx.name) { viewModelScope.launch { fxRepository.restore(deleted) } })
+        }
+    }
+
+    /** Copies the FX right after itself in the library. */
+    fun duplicate(fxId: Long) {
+        viewModelScope.launch { fxRepository.duplicate(fxId) }
     }
 
     fun reorder(orderedIds: List<Long>) {

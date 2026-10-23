@@ -77,8 +77,10 @@ class AllLightsTest : DatabaseTest() {
             assertEquals(240f, target.hue)
             assertEquals(0.7f, target.brightness)
         }
-        // Each bulb still reports its own group, for failure badges.
-        assertEquals(setOf(ceiling, lamp), targets.map { it.slotId }.toSet())
+        // The All-lights slot decides every bulb (its swatch takes failure badges), and each bulb
+        // still lists its own groups.
+        assertEquals(setOf(room), targets.map { it.slotId }.toSet())
+        assertEquals(setOf(listOf(ceiling), listOf(lamp)), targets.map { it.groupIds }.toSet())
     }
 
     @Test

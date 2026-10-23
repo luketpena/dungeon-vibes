@@ -2,6 +2,7 @@ package com.dungeonvibes.data.db
 
 import androidx.room.Dao
 import androidx.room.Insert
+import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Update
 import androidx.room.Upsert
@@ -14,6 +15,13 @@ import kotlinx.coroutines.flow.Flow
 interface BulbDao {
     @Query("SELECT * FROM bulbs ORDER BY name COLLATE NOCASE, id")
     fun observeAll(): Flow<List<BulbEntity>>
+
+    /** Every bulb in name order (the order Wave follows). */
+    @Query("SELECT * FROM bulbs ORDER BY name COLLATE NOCASE, id")
+    suspend fun all(): List<BulbEntity>
+
+    @Query("SELECT * FROM bulbs WHERE id = :id")
+    fun observe(id: Long): Flow<BulbEntity?>
 
     @Query("SELECT EXISTS(SELECT 1 FROM bulbs)")
     suspend fun hasAny(): Boolean
@@ -36,24 +44,57 @@ interface BulbDao {
 
 @Dao
 interface LightSlotDao {
-    /** The user's groups, without the hidden All-lights slot. */
-    @Query("SELECT * FROM light_slots WHERE isRoom = 0 ORDER BY sortOrder, id")
+    /** The user's groups in their order (which decides shared bulbs), without the hidden slots. */
+    @Query("SELECT * FROM light_slots WHERE isRoom = 0 AND bulbId IS NULL ORDER BY sortOrder, id")
     fun observeAll(): Flow<List<LightSlotEntity>>
+
+    @Query("SELECT * FROM light_slots WHERE isRoom = 0 AND bulbId IS NULL ORDER BY sortOrder, id")
+    suspend fun groups(): List<LightSlotEntity>
+
+    /** Individual lights' hidden slots, named after their bulbs (kept current with renames). */
+    @Query(
+        """
+        SELECT s.id, b.name AS name, s.sortOrder, s.isRoom, s.bulbId
+        FROM light_slots s JOIN bulbs b ON b.id = s.bulbId
+        ORDER BY b.name COLLATE NOCASE, s.id
+        """,
+    )
+    fun observeBulbSlots(): Flow<List<LightSlotEntity>>
+
+    @Query("SELECT * FROM light_slots WHERE bulbId IS NOT NULL")
+    suspend fun bulbSlots(): List<LightSlotEntity>
+
+    @Query("SELECT id FROM light_slots WHERE bulbId = :bulbId ORDER BY id LIMIT 1")
+    suspend fun bulbSlotId(bulbId: Long): Long?
 
     @Query("SELECT id FROM light_slots WHERE isRoom = 1 ORDER BY id LIMIT 1")
     suspend fun roomSlotId(): Long?
 
-    /** Ids of the user's groups (not the All-lights slot). */
-    @Query("SELECT id FROM light_slots WHERE isRoom = 0")
+    /** Ids of every slot, hidden ones included. */
+    @Query("SELECT id FROM light_slots")
+    suspend fun allIds(): List<Long>
+
+    /** Ids of the user's groups (not the hidden slots). */
+    @Query("SELECT id FROM light_slots WHERE isRoom = 0 AND bulbId IS NULL")
     suspend fun groupIds(): List<Long>
 
     @Query("SELECT id FROM light_slots WHERE isRoom = 1 ORDER BY id LIMIT 1")
     fun observeRoomSlotId(): Flow<Long?>
 
-    @Query("SELECT * FROM slot_bulbs")
+    /** Every assignment, each group's in its bulb order. */
+    @Query("SELECT * FROM slot_bulbs ORDER BY slotId, position, bulbId")
     fun observeAssignments(): Flow<List<SlotBulbEntity>>
 
-    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM light_slots WHERE isRoom = 0")
+    @Query("SELECT * FROM slot_bulbs ORDER BY slotId, position, bulbId")
+    suspend fun assignments(): List<SlotBulbEntity>
+
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM slot_bulbs WHERE slotId = :slotId")
+    suspend fun nextPosition(slotId: Long): Int
+
+    @Query("UPDATE slot_bulbs SET position = :position WHERE slotId = :slotId AND bulbId = :bulbId")
+    suspend fun setPosition(slotId: Long, bulbId: Long, position: Int)
+
+    @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM light_slots WHERE isRoom = 0 AND bulbId IS NULL")
     suspend fun nextSortOrder(): Int
 
     @Insert
@@ -68,15 +109,16 @@ interface LightSlotDao {
     @Query("DELETE FROM light_slots WHERE id = :id")
     suspend fun delete(id: Long)
 
-    /** Insert or replace by bulbId, so assigning a bulb to a new slot moves it. */
-    @Upsert
+    /** Puts a bulb in a slot; a bulb already there keeps its place (it can be in other slots too). */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun assign(assignment: SlotBulbEntity)
 
+    /** Takes a bulb out of every slot. */
     @Query("DELETE FROM slot_bulbs WHERE bulbId = :bulbId")
     suspend fun unassign(bulbId: Long)
 
-    @Query("SELECT * FROM slot_bulbs WHERE bulbId = :bulbId")
-    suspend fun assignmentFor(bulbId: Long): SlotBulbEntity?
+    @Query("DELETE FROM slot_bulbs WHERE slotId = :slotId AND bulbId = :bulbId")
+    suspend fun unassignFrom(slotId: Long, bulbId: Long)
 
     @Query("DELETE FROM slot_bulbs WHERE slotId = :slotId")
     suspend fun unassignAll(slotId: Long)
@@ -107,6 +149,9 @@ interface AdventureDao {
 
     @Query("SELECT COALESCE(MAX(sortOrder), -1) + 1 FROM adventures")
     suspend fun nextSortOrder(): Int
+
+    @Query("SELECT id FROM adventures ORDER BY sortOrder, id")
+    suspend fun orderedIds(): List<Long>
 
     @Insert
     suspend fun insert(adventure: AdventureEntity): Long
@@ -163,6 +208,17 @@ interface SceneDao {
     @Query("UPDATE scenes SET parentSceneId = :parentSceneId WHERE id = :id")
     suspend fun setParent(id: Long, parentSceneId: Long?)
 
+    @Query("UPDATE scenes SET introFxId = :fxId, updatedAt = :updatedAt WHERE id = :id")
+    suspend fun setIntroFx(id: Long, fxId: Long?, updatedAt: Long)
+
+    /** Scenes opening with this FX (for undoing its delete, which clears them). */
+    @Query("SELECT id FROM scenes WHERE introFxId = :fxId")
+    suspend fun introducedBy(fxId: Long): List<Long>
+
+    /** Gives scenes their intro FX back, unless one was given another meanwhile. */
+    @Query("UPDATE scenes SET introFxId = :fxId WHERE id IN (:ids) AND introFxId IS NULL")
+    suspend fun relinkIntros(ids: List<Long>, fxId: Long)
+
     @Query("UPDATE scenes SET sortOrder = :sortOrder WHERE id = :id")
     suspend fun setSortOrder(id: Long, sortOrder: Int)
 
@@ -172,6 +228,18 @@ interface SceneDao {
 
     @Query("DELETE FROM scenes WHERE id = :id")
     suspend fun delete(id: Long)
+
+    /** Every scene in one list (the library, or one adventure), in order; never the default scene. */
+    @Query("SELECT * FROM scenes WHERE adventureId IS :adventureId AND isDefault = 0 ORDER BY sortOrder, id")
+    suspend fun getList(adventureId: Long?): List<SceneEntity>
+
+    /** Adventure copies of a library scene (for undoing its delete, which unlinks them). */
+    @Query("SELECT id FROM scenes WHERE parentSceneId = :sceneId")
+    suspend fun copiesOf(sceneId: Long): List<Long>
+
+    /** Relinks copies that are still unlinked (one promoted meanwhile keeps its new parent). */
+    @Query("UPDATE scenes SET parentSceneId = :parentSceneId WHERE id IN (:ids) AND parentSceneId IS NULL")
+    suspend fun relinkCopies(ids: List<Long>, parentSceneId: Long)
 }
 
 @Dao
@@ -209,31 +277,11 @@ interface SceneLightDao {
     )
     suspend fun copyLights(fromSceneId: Long, toSceneId: Long)
 
-    /**
-     * One row per bulb that is assigned to a slot (rule 8): unassigned bulbs never appear, and
-     * slots with no light row in this scene come back with isOn = false. With the scene's "All
-     * lights" on, every bulb comes back lit with the All-lights settings (the room slot's row),
-     * or the defaults ([LightDefaults]) if it has none. Within a slot, bulbs come in name order.
-     */
-    @Query(
-        """
-        SELECT b.id AS bulbId, b.name AS bulbName, b.protocolId, b.serial, b.lastKnownIp, sb.slotId,
-               CASE WHEN sc.allLightsOn = 1 THEN 1 ELSE COALESCE(sl.isOn, 0) END AS isOn,
-               COALESCE(CASE WHEN sc.allLightsOn = 1 THEN rl.mode ELSE sl.mode END, 'WHITE') AS mode,
-               COALESCE(CASE WHEN sc.allLightsOn = 1 THEN rl.hue ELSE sl.hue END, ${LightDefaults.HUE}) AS hue,
-               COALESCE(CASE WHEN sc.allLightsOn = 1 THEN rl.saturation ELSE sl.saturation END, ${LightDefaults.SATURATION}) AS saturation,
-               COALESCE(CASE WHEN sc.allLightsOn = 1 THEN rl.kelvin ELSE sl.kelvin END, ${LightDefaults.KELVIN}) AS kelvin,
-               COALESCE(CASE WHEN sc.allLightsOn = 1 THEN rl.brightness ELSE sl.brightness END, ${LightDefaults.BRIGHTNESS}) AS brightness
-        FROM slot_bulbs sb
-        JOIN bulbs b ON b.id = sb.bulbId
-        LEFT JOIN scenes sc ON sc.id = :sceneId
-        LEFT JOIN scene_lights sl ON sl.slotId = sb.slotId AND sl.sceneId = :sceneId
-        LEFT JOIN scene_lights rl ON rl.sceneId = :sceneId
-            AND rl.slotId = (SELECT id FROM light_slots WHERE isRoom = 1 ORDER BY id LIMIT 1)
-        ORDER BY sb.slotId, b.name COLLATE NOCASE, b.id
-        """,
-    )
-    suspend fun applyTargets(sceneId: Long): List<BulbApplyTarget>
+    @Query("DELETE FROM scene_lights WHERE sceneId = :sceneId AND slotId = :slotId")
+    suspend fun delete(sceneId: Long, slotId: Long)
+
+    @Insert
+    suspend fun insertAll(lights: List<SceneLightEntity>)
 }
 
 @Dao
@@ -325,4 +373,43 @@ interface FxDao {
 
     @Insert
     suspend fun insertTargets(targets: List<FxTargetEntity>)
+
+    @Query("SELECT * FROM fx_targets WHERE fxId = :fxId")
+    suspend fun targetRows(fxId: Long): List<FxTargetEntity>
+
+    @Query("SELECT id FROM fx ORDER BY sortOrder, id")
+    suspend fun orderedIds(): List<Long>
+
+    /** FX that turn into this scene (for undoing its delete, which sets them back to Return). */
+    @Query("SELECT id FROM fx WHERE transitionSceneId = :sceneId")
+    suspend fun transitioningTo(sceneId: Long): List<Long>
+
+    /** Points FX back at a restored scene, unless one was given another scene meanwhile. */
+    @Query("UPDATE fx SET transitionSceneId = :sceneId WHERE id IN (:ids) AND transitionSceneId IS NULL")
+    suspend fun relinkTransitions(ids: List<Long>, sceneId: Long)
+
+    /* Per-adventure favorites */
+
+    /** One adventure's favorite FX ids, in board order. */
+    @Query("SELECT fxId FROM adventure_fx WHERE adventureId = :adventureId ORDER BY position, fxId")
+    fun observeFavorites(adventureId: Long): Flow<List<Long>>
+
+    @Query("SELECT * FROM adventure_fx WHERE adventureId = :adventureId")
+    suspend fun favoritesOfAdventure(adventureId: Long): List<AdventureFxEntity>
+
+    @Query("SELECT * FROM adventure_fx WHERE fxId = :fxId")
+    suspend fun favoritesOfFx(fxId: Long): List<AdventureFxEntity>
+
+    @Query("SELECT COALESCE(MAX(position), -1) + 1 FROM adventure_fx WHERE adventureId = :adventureId")
+    suspend fun nextFavoritePosition(adventureId: Long): Int
+
+    /** Rows whose adventure or FX is gone are skipped by the caller first; duplicates are ignored. */
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertFavorites(rows: List<AdventureFxEntity>)
+
+    @Query("DELETE FROM adventure_fx WHERE adventureId = :adventureId AND fxId = :fxId")
+    suspend fun removeFavorite(adventureId: Long, fxId: Long)
+
+    @Query("SELECT id FROM fx")
+    suspend fun allIds(): List<Long>
 }

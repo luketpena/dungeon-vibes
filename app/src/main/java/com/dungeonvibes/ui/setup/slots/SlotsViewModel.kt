@@ -22,11 +22,10 @@ data class SlotItem(
     val bulbNames: List<String>,
 )
 
-/** A bulb as offered in a slot's checkbox list, with the slot it's currently in (if any). */
+/** A bulb as offered in a group's checkbox list, with every group it's in, in group order. */
 data class BulbChoice(
     val bulb: BulbEntity,
-    val slotId: Long?,
-    val slotName: String?,
+    val groups: List<LightSlotEntity>,
 )
 
 data class SlotsUiState(
@@ -49,32 +48,31 @@ class SlotsViewModel @Inject constructor(
         slots.observeAssignments(),
         bulbs.observeBulbs(),
     ) { slotList, assignments, bulbList ->
-        val slotNames = HashMap<Long, String>(slotList.size)
-        for (slot in slotList) slotNames[slot.id] = slot.name
         val bulbNames = HashMap<Long, String>(bulbList.size)
         for (bulb in bulbList) bulbNames[bulb.id] = bulb.name
-        val slotOfBulb = HashMap<Long, Long>(assignments.size)
         val bulbsOfSlot = HashMap<Long, MutableSet<Long>>()
         for (assignment in assignments) {
-            slotOfBulb[assignment.bulbId] = assignment.slotId
             bulbsOfSlot.getOrPut(assignment.slotId) { LinkedHashSet() }.add(assignment.bulbId)
         }
 
         val slotItems = ArrayList<SlotItem>(slotList.size)
         for (slot in slotList) {
             val ids = bulbsOfSlot[slot.id] ?: emptySet()
-            slotItems.add(SlotItem(slot, ids, ids.mapNotNull { bulbNames[it] }.sorted()))
+            // In the group's bulb order (assignments come that way).
+            slotItems.add(SlotItem(slot, ids, ids.mapNotNull { bulbNames[it] }))
         }
         val choices = ArrayList<BulbChoice>(bulbList.size)
         for (bulb in bulbList) {
-            val slotId = slotOfBulb[bulb.id]
-            choices.add(BulbChoice(bulb, slotId, slotId?.let { slotNames[it] }))
+            choices.add(BulbChoice(bulb, slotList.filter { bulbsOfSlot[it.id]?.contains(bulb.id) == true }))
         }
         SlotsUiState(slots = slotItems, bulbs = choices, isLoaded = true)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SlotsUiState())
 
     private val _pendingDelete = MutableStateFlow<PendingSlotDelete?>(null)
     val pendingDelete: StateFlow<PendingSlotDelete?> = _pendingDelete.asStateFlow()
+
+    /** Creates an empty group at the end of the list and returns its id, for opening its page. */
+    suspend fun createGroup(name: String): Long = slots.createSlot(name)
 
     /** Creates a slot at the end of the list and puts the chosen bulbs in it. */
     fun addSlot(name: String, bulbIds: Set<Long>) {
@@ -84,7 +82,7 @@ class SlotsViewModel @Inject constructor(
         }
     }
 
-    /** Saves a slot's name and its exact set of bulbs (bulbs from other slots move here). */
+    /** Saves a group's name and its exact set of bulbs (they stay in any other groups too). */
     fun saveSlot(slot: LightSlotEntity, name: String, bulbIds: Set<Long>) {
         viewModelScope.launch {
             if (name != slot.name) slots.rename(slot.id, name)

@@ -54,11 +54,12 @@ class SlotsViewModelTest : DatabaseTest() {
         val state = viewModel.uiState.first { it.isLoaded && it.bulbs.size == 3 && it.slots.size == 2 }
 
         assertEquals(listOf("Ceiling", "Lamp"), state.slots.map { it.slot.name })
-        assertEquals(listOf("Amy", "Zed"), state.slots[0].bulbNames)
+        // In the group's own bulb order (the order it was given), not by name.
+        assertEquals(listOf("Zed", "Amy"), state.slots[0].bulbNames)
         assertTrue(state.slots[1].bulbNames.isEmpty())
         val choices = state.bulbs.associateBy { it.bulb.name }
-        assertEquals("Ceiling", choices.getValue("Amy").slotName)
-        assertNull(choices.getValue("Loose").slotName)
+        assertEquals(listOf("Ceiling"), choices.getValue("Amy").groups.map { it.name })
+        assertTrue(choices.getValue("Loose").groups.isEmpty())
     }
 
     @Test

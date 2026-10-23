@@ -16,6 +16,7 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
 import androidx.compose.material3.adaptive.layout.AnimatedPane
@@ -49,6 +50,8 @@ import com.dungeonvibes.ui.adventures.play.GlowCardShape
 import com.dungeonvibes.ui.adventures.play.PlayView
 import com.dungeonvibes.ui.adventures.play.rememberRoomGlowModifier
 import com.dungeonvibes.ui.common.ConfirmDialog
+import com.dungeonvibes.ui.common.ItemMenuButton
+import com.dungeonvibes.ui.common.UndoDeleteSnackbars
 import com.dungeonvibes.ui.common.NameDialog
 import com.dungeonvibes.ui.common.TopLevelScreen
 import kotlinx.coroutines.flow.StateFlow
@@ -128,9 +131,12 @@ private fun AdventureListPane(
         haptics.performHapticFeedback(HapticFeedbackType.SegmentFrequentTick)
     }
     var dialog by remember { mutableStateOf<AdventureDialog?>(null) }
+    val snackbar = remember { SnackbarHostState() }
+    UndoDeleteSnackbars(viewModel.deletions, snackbar)
 
     TopLevelScreen(
         title = stringResource(R.string.nav_adventures),
+        snackbarHostState = snackbar,
         floatingActionButton = {
             ExtendedFloatingActionButton(
                 onClick = { dialog = AdventureDialog.Create },
@@ -196,12 +202,11 @@ private fun AdventureListPane(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            IconButton(onClick = { dialog = AdventureDialog.Rename(item) }) {
-                                Icon(painterResource(R.drawable.ic_edit), contentDescription = stringResource(R.string.action_rename))
-                            }
-                            IconButton(onClick = { dialog = AdventureDialog.Delete(item) }) {
-                                Icon(painterResource(R.drawable.ic_delete), contentDescription = stringResource(R.string.action_delete))
-                            }
+                            ItemMenuButton(
+                                onRename = { dialog = AdventureDialog.Rename(item) },
+                                onDuplicate = { viewModel.duplicate(id) },
+                                onDelete = { dialog = AdventureDialog.Delete(item) },
+                            )
                         }
                     }
                 }

@@ -108,9 +108,9 @@ Fields
 Bulb
 id, protocolId, serial, lastKnownIp, name, lastSeenAt
 LightSlot
-id, name, sortOrder
+id, name, sortOrder (also decides which group wins a shared bulb; see rule 8)
 SlotBulb
-slotId, bulbId. A bulb belongs to at most one slot
+slotId, bulbId, position. A bulb can be in several slots (owner request, Oct 22, 2026). position orders a group's bulbs: Wave, Spin and FX follow it (owner request, Oct 23, 2026)
 Adventure
 id, name, sortOrder, createdAt, updatedAt
 Scene
@@ -130,35 +130,37 @@ Rules
 5. Promote: creates a new library scene copied from the adventure scene, then sets the adventure scene's parentSceneId to it.
 6. Delete a library scene: its copies stay in their adventures. Their parentSceneId becomes null, so Reset disappears for them.
 7. SceneLight with isOn = false keeps its color values, so turning it back on restores the last color. Switching between color and white mode also keeps both sets of values.
-8. Slots with no SceneLight row, or isOn = false, turn off when the scene is applied. Bulbs not assigned to any slot are never touched. Exception (owner request, Oct 21, 2026): a scene with "All lights" on gives every assigned bulb the scene's All-lights settings (its own color/white, brightness and effects, or the defaults if never set); each slot's own settings are kept unchanged underneath.
+8. Slots with no SceneLight row, or isOn = false, turn off when the scene is applied. Bulbs not assigned to any slot are never touched (unless a scene sets them individually). Exception (owner request, Oct 21, 2026): a scene with "All lights" on gives every assigned bulb the scene's All-lights settings (its own color/white, brightness and effects, or the defaults if never set); each slot's own settings are kept unchanged underneath.
+   Precedence (owner request, Oct 22, 2026): a scene can also set individual lights (single bulbs), which win over everything. Then All lights, if on. Then, for a bulb in several groups, the highest group in Setup's order that is on in the scene; groups that are off don't count. The winner gives the bulb its look and its continuous effects (Multi-color, Brightness shift); Flashes from every other lit group holding the bulb still play on it.
 9. New light slot: existing scenes get no row for it, so it stays off in them until the user edits them.
 Screens and behavior
 The app has three top-level destinations: Adventures, Scenes, and Setup. Adventures opens by default once setup is done; on first launch with no bulbs, the app opens Setup.
 1. Setup → Bulbs
-• Scans automatically on open, plus pull-to-refresh. Shows each bulb's name, online/offline status, and its slot.
-• Tap a bulb to rename it. An Identify button blinks that bulb.
+• Scans automatically on open, plus pull-to-refresh. Shows each bulb's name, online/offline status, and its highest group, with "+n" for any others.
+• Tap a bulb for its page: rename, brand (when known), status and address, Identify (blinks the bulb), Remove, and every group with a checkbox to add or remove the bulb (owner request, Oct 22, 2026).
 • Remove a bulb from the app (it reappears on the next scan if still on the network; removal is mainly for dead bulbs).
 • Empty state explains: set up bulbs in the LIFX app first, and make sure the phone is on the same Wi-Fi.
 2. Setup → Light slots
-• Add, rename, delete, and drag to reorder slots.
-• Assign bulbs to a slot with checkboxes. A bulb already in another slot shows that slot's name; picking it moves it.
+• Add, rename, delete, and drag to reorder slots. The order is a hierarchy: a higher group wins a bulb it shares with a lower one.
+• Each group has its own page (owner request, Oct 23, 2026): name, its bulbs with drag to reorder (the order Wave and Spin follow), add and remove bulbs, Identify, and Delete.
+• Assign bulbs to a slot with checkboxes. A bulb already in other slots lists them; picking it adds it here too.
 • Deleting a slot asks for confirmation and says how many scenes use it.
 3. Scenes (the library)
 • List of library scenes, each showing its name and a row of color swatches, one per slot.
-• Add, delete (with confirmation), and drag to reorder.
+• Add, duplicate, delete (with confirmation, then Undo for a few seconds), and drag to reorder (owner request, Oct 23, 2026: Duplicate and Undo).
 • Tap opens the scene editor. A play button on each row applies the scene.
 4. Scene editor (shared by library and adventure scenes)
-• Name field and a fade-time control. Default fade is 1.0 s; range 0–10 s.
+• Name field and a fade-time control (labelled Fade in, inside an Introduction box with the intro FX; owner request, Oct 23, 2026). Default fade is 1.0 s; range 0 s–10 min in whole seconds (owner request, Oct 23, 2026; was 0–10 s).
 • One row per light slot: an on/off switch, a color swatch, and a name. Tapping the swatch expands a Color/White toggle. Color shows hue, saturation, and brightness sliders; White shows temperature (warm to cool) and brightness sliders, defaulting to 2700 K.
 • Live preview is on by default, with a toggle. While on, every change is sent to that slot's bulbs as described in Bulb control.
 • Adventure scenes also show "Reset to library version" (rule 4) and "Save to library" (rule 5).
 • Changes save automatically. Leaving the editor does not revert the bulbs.
 5. Adventures
-• List of adventures with scene counts. Add, rename, delete (with confirmation), and drag to reorder.
+• List of adventures with scene counts. Add, rename, duplicate (scenes and FX favorites), delete (with confirmation, then Undo), and drag to reorder.
 6. Adventure (play view)
 • Scenes as large tiles in a grid, each showing its name and swatches. Tapping a tile applies the scene and marks it active.
 • The screen stays awake while this view is open.
-• An Edit toggle switches to edit mode: drag to reorder, delete, and open the editor. Tiles never apply in edit mode, to prevent mistakes at the table.
+• An Edit toggle switches to edit mode: drag to reorder, duplicate, delete (with Undo), and open the editor. Tiles never apply in edit mode, to prevent mistakes at the table.
 • "Add scene" offers "New blank scene" or "From library." The library picker allows selecting several scenes at once, each added as its own copy.
 Tablet layouts
 • Adventures: adventure list on the left, play view on the right.
@@ -215,9 +217,11 @@ Lights menu and default lighting (added after the MVP, owner request, Oct 22, 20
 • Every screen's title bar has a lights menu (a bulb icon, filled while the lights are on) with two entries:
     – Turn off lights / Turn on lights. "Turn off lights" shows while any light is on and fades every assigned bulb off. "Turn on lights" shows only once the app has turned them off, and brings back whatever was showing (a scene, or the default lighting). With nothing showing before (fresh launch, or after an FX that ended in Lights off), it turns on to the default lighting.
     – Default lighting (a switch). On: the default lighting shows. Off: the scene that was showing before comes back; with none, the lights turn off.
+    – Dimmer (owner request, Oct 23, 2026): a 5–100 % slider that scales the brightness of everything the app sends (scenes, effects, FX, preview) without changing any scene. Lit bulbs follow it at once; it's remembered between launches.
+    – When bulbs in groups aren't answering (they missed the last scene, or the last scan and no scene since), the menu's first line says how many, with Check to scan again, and the bulb icon gets a small warning dot.
 • On/off comes first: while the lights are off, the default lighting switch can't be changed.
 • Playing any scene (a tile, the library, an FX moving into a scene, or opening a scene in the editor) switches the default lighting off and counts as the lights being on.
-• The app can't read the bulbs' power, so "on" and "off" are the app's own record: at launch the lights are assumed on, and changes made outside the app aren't seen.
+• "On" and "off" are the app's own record. At launch it reads what the bulbs report in the startup scan: if every assigned bulb that answered is off, the menu starts as off (owner request, Oct 23, 2026); otherwise it assumes on. Changes made outside the app later aren't seen.
 Future scope
 These are planned but not part of the MVP. The MVP design should not make any of them harder.
 • More protocols: Matter, Philips Hue, WiZ, Govee, Yeelight, each as a new LightAdapter.

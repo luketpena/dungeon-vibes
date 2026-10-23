@@ -6,6 +6,8 @@ import com.dungeonvibes.data.db.FlickerSettings
 import com.dungeonvibes.data.db.FxColor
 import com.dungeonvibes.data.db.FxPrimitive
 import com.dungeonvibes.data.db.PulseSettings
+import com.dungeonvibes.data.db.SpinFxSettings
+import com.dungeonvibes.data.db.StrobeSettings
 import com.dungeonvibes.data.db.Spread
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.light.BulbAddress
@@ -104,6 +106,25 @@ class EffectRunnerTest {
     }
 
     @Test
+    fun aBulbInTwoLitGroups_keepsItsOwnersLook_andFlashesWithTheOther() = runTest {
+        val f = fixture()
+        val ownerBase = LightState(30f, 1f, 0.3f, null)
+        // Bulb 1 is won by a still group; the storm group (which owns bulb 2) only flashes it.
+        val owner = EffectGroup(1, ownerBase, GroupEffects(), listOf(bulb1))
+        val storm = EffectGroup(2, base, lightning, listOf(bulb1, bulb2), flashOnly = setOf(bulb1))
+        f.runner.start(listOf(owner, storm), startFadeMs = 0, random = Random(1))
+        advanceTimeBy(1_600)
+
+        val frames = f.frames(serial1)
+        assertTrue("the storm's flash reaches bulb 1", frames.any { it.state.brightness > 0.99f })
+        // Between flashes bulb 1 shows its owner's look, not the storm group's base.
+        assertEquals(30f, frames.last().state.hue, 0.5f)
+        assertEquals(0.3f, frames.last().state.brightness, 0.0001f)
+        // Bulb 2 belongs to the storm group.
+        assertEquals(0.08f, f.frames(serial2).last().state.brightness, 0.0001f)
+    }
+
+    @Test
     fun flashes_areSentOnTheirEdges_soAShortAttackStaysCrisp() = runTest {
         val f = fixture()
         f.runner.start(listOf(group(lightning, bulb1)), startFadeMs = 0, random = Random(1))
@@ -118,22 +139,38 @@ class EffectRunnerTest {
     }
 
     @Test
-    fun burstPulses_landExactlyOnTheirEdges() = runTest {
-        val rolling = lightning.copy(
-            flashes = lightning.flashes.copy(pulsesMin = 3, pulsesMax = 3, spacingMinMs = 70, spacingMaxMs = 70),
-        )
+    fun flickerPulses_landExactlyOnTheirEdges() = runTest {
+        val rolling = lightning.copy(flashes = lightning.flashes.withFlicker(true))
         val f = fixture()
         f.runner.start(listOf(group(rolling, bulb1)), startFadeMs = 0, random = Random(1))
-        // Pulses start at 1000, 1410 and 1820 (340 ms long, 70 ms apart).
-        val strikes = mutableListOf<Long>()
+        // Each pulse snaps on (fade 0) the moment it starts; the frame before it is the dim 0.08
+        // base (or a release heading there), so a pulse shows as a jump above 0.1.
+        val starts = mutableListOf<Long>()
+        val tops = mutableListOf<Float>()
         var seen = 0
+        var previous = 0f
         repeat(2_000) {
             advanceTimeBy(1)
-            val now = f.frames(serial1).count { it.state.brightness > 0.99f }
-            if (now > seen) strikes.add(testScheduler.currentTime)
-            seen = now
+            val frames = f.frames(serial1)
+            for (i in seen until frames.size) {
+                val frame = frames[i]
+                val brightness = frame.state.brightness
+                if (brightness > 0.1f && previous <= 0.1f) {
+                    assertEquals(0, frame.fadeMs)
+                    starts.add(testScheduler.currentTime)
+                    tops.add(brightness)
+                }
+                previous = brightness
+            }
+            seen = frames.size
         }
-        assertEquals(listOf(1_001L, 1_411L, 1_821L), strikes)
+        // 2 or 3 pulses from 1000 ms; all but the last are 100 ms long (40 hold, 60 release) and
+        // the next starts 5–10 ms after. One of them is the full strike.
+        assertTrue("$starts", starts.size in 2..3)
+        assertEquals(1_001L, starts[0])
+        for (i in 1 until starts.size) assertTrue("$starts", starts[i] - starts[i - 1] in 105L..110L)
+        assertEquals("$tops", 1, tops.count { it > 0.99f })
+        assertTrue("$tops", tops.last() > 0.99f) // the strike comes last
     }
 
     @Test
@@ -380,5 +417,82 @@ class EffectRunnerTest {
         val commands = f.fake.commands.value
         assertTrue(Command.SetPower(serial2, false, 500, reliable = true) in commands)
         assertTrue(commands.any { it is Command.SetState && it.serial == serial1 && kotlin.math.abs(it.state.brightness - base.brightness) < 0.001f })
+    }
+
+    @Test
+    fun fire_whileASceneFadesIn_playsAtOnce_andTheSceneEffectsStartAfter() = runTest {
+        val f = fixture()
+        // A scene with effects waits out its 2 s fade before animating.
+        f.runner.start(listOf(group(breathing, bulb1)), startFadeMs = 0, random = Random(1), startDelayMs = 2_000)
+        advanceTimeBy(500)
+        f.runner.fire(fxFire(lit(bulb1)), Random(2))
+        advanceTimeBy(200)
+        // Playing now, not after the fade.
+        val peak = f.frames(serial1).last()
+        assertEquals(120f, peak.state.hue, 0.5f)
+        assertEquals(1f, peak.state.brightness, 0.001f)
+
+        advanceTimeBy(2_000)
+        f.fake.clearLog()
+        advanceTimeBy(1_000)
+        // The breathing took over on its own color.
+        val frames = f.frames(serial1)
+        assertTrue(frames.isNotEmpty())
+        assertTrue(frames.all { kotlin.math.abs(it.state.hue - 250f) < 0.5f })
+        assertTrue(f.runner.isRunning.value)
+    }
+
+    @Test
+    fun fire_whileASceneFadesIn_itsTransitionRunsOnce() = runTest {
+        val f = fixture()
+        val calls = mutableListOf<Int>()
+        f.runner.start(listOf(group(breathing, bulb1)), startFadeMs = 0, random = Random(1), startDelayMs = 400)
+        f.runner.fire(fxFire(lit(bulb1)) { ms -> calls.add(ms) }, Random(2))
+        advanceTimeBy(2_000)
+        assertEquals(listOf(400), calls)
+    }
+
+    @Test
+    fun fire_offWifi_anFxOnlyRunStillEnds() = runTest {
+        val f = fixture()
+        f.online.value = false
+        f.runner.fire(fxFire(lit(bulb1)), Random(1))
+        runCurrent()
+        assertTrue(f.runner.isRunning.value)
+        advanceTimeBy(1_500)
+        assertFalse(f.runner.isRunning.value)
+    }
+
+    @Test
+    fun fire_strobe_flashesOnAndOffForItsDuration() = runTest {
+        val f = fixture()
+        val strobe = StrobeSettings(color = FxColor.white(6_500), level = 1f, flashesPerSecond = 2f, durationMs = 1_000)
+        f.runner.fire(
+            FxFire(FxPrimitive.STROBE, heal, FlickerSettings(), Spread.TOGETHER, 500, listOf(lit(bulb1)), strobe = strobe),
+            Random(1),
+        )
+        advanceTimeBy(1_500)
+        val levels = f.frames(serial1).map { it.state.brightness }
+        // On, off, on, off (250 ms each), then back to the scene.
+        assertTrue(levels.count { it > 0.99f } >= 2)
+        assertTrue(levels.count { it < 0.01f } >= 2)
+        assertEquals(base.brightness, levels.last(), 0.001f)
+        assertFalse(f.runner.isRunning.value)
+    }
+
+    @Test
+    fun fire_spin_lightsEachBulbInTurn() = runTest {
+        val f = fixture()
+        val spin = SpinFxSettings(color = FxColor.color(270f), level = 1f, attackMs = 0, holdMs = 250, releaseMs = 0, stepMs = 300, laps = 1)
+        f.runner.fire(
+            FxFire(FxPrimitive.SPIN, heal, FlickerSettings(), Spread.TOGETHER, 500, listOf(lit(bulb1), lit(bulb2)), spin = spin),
+            Random(1),
+        )
+        advanceTimeBy(150)
+        assertEquals(270f, f.frames(serial1).last().state.hue, 0.5f)
+        assertTrue(f.frames(serial2).none { kotlin.math.abs(it.state.hue - 270f) < 0.5f })
+        advanceTimeBy(300)
+        assertEquals(270f, f.frames(serial2).last().state.hue, 0.5f)
+        assertEquals(250f, f.frames(serial1).last().state.hue, 0.5f)
     }
 }

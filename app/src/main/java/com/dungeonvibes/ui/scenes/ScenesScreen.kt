@@ -45,14 +45,19 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.dungeonvibes.R
 import com.dungeonvibes.data.db.SceneEntity
+import com.dungeonvibes.ui.adventures.play.PlayStateIcon
 import com.dungeonvibes.ui.common.SceneHaptic
 import com.dungeonvibes.ui.common.ConfirmDialog
+import com.dungeonvibes.ui.common.ItemMenuButton
+import com.dungeonvibes.ui.common.UndoDeleteSnackbars
 import com.dungeonvibes.ui.common.LocalOnLocalNetwork
 import com.dungeonvibes.ui.common.ScenePalette
 import com.dungeonvibes.ui.common.TopLevelScreen
@@ -146,6 +151,8 @@ private fun SceneLibraryPane(
     viewModel: ScenesViewModel = hiltViewModel(),
 ) {
     val state by viewModel.uiState.collectAsStateWithLifecycle()
+    val activeSceneId by viewModel.activeSceneId.collectAsStateWithLifecycle()
+    val applyLabel = stringResource(R.string.action_apply)
     val onLocalNetwork = LocalOnLocalNetwork.current
     val haptics = LocalHapticFeedback.current
     val scope = rememberCoroutineScope()
@@ -163,6 +170,8 @@ private fun SceneLibraryPane(
             }
         }
     }
+
+    UndoDeleteSnackbars(viewModel.deletions, snackbar)
 
     var ordered by remember { mutableStateOf(state.scenes) }
     LaunchedEffect(state.scenes) { ordered = state.scenes }
@@ -230,11 +239,17 @@ private fun SceneLibraryPane(
                                 },
                                 enabled = onLocalNetwork,
                             ) {
-                                Icon(painterResource(R.drawable.ic_play), contentDescription = stringResource(R.string.action_apply))
+                                // The same mark as the adventure tiles: play, or spinning while this scene plays.
+                                PlayStateIcon(
+                                    running = item.scene.id == activeSceneId,
+                                    colors = item.swatches.markColors(),
+                                    modifier = Modifier.semantics { contentDescription = applyLabel },
+                                )
                             }
-                            IconButton(onClick = { pendingDelete = item.scene }) {
-                                Icon(painterResource(R.drawable.ic_delete), contentDescription = stringResource(R.string.action_delete))
-                            }
+                            ItemMenuButton(
+                                onDuplicate = { viewModel.duplicate(item.scene.id) },
+                                onDelete = { pendingDelete = item.scene },
+                            )
                         }
                     }
                 }

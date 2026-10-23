@@ -3,6 +3,8 @@ package com.dungeonvibes.light.fx
 import com.dungeonvibes.data.db.FlickerSettings
 import com.dungeonvibes.data.db.FxPrimitive
 import com.dungeonvibes.data.db.PulseSettings
+import com.dungeonvibes.data.db.SpinFxSettings
+import com.dungeonvibes.data.db.StrobeSettings
 import com.dungeonvibes.data.db.Spread
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.light.ApplicationScope
@@ -34,12 +36,19 @@ import kotlinx.coroutines.yield
 /**
  * One group to animate: its scene base, its effect layers and its bulbs, in Wave order.
  * [base] is the group's scene settings (never "off"; groups that are off have no effects).
+ *
+ * A bulb can be in several lit groups. The group that wins it (see SceneResolver) owns it: its
+ * base, Color shift and Brightness shift. Every other lit group that holds it lists it in
+ * [flashOnly] and adds only its Flashes on top (owner decision). Flash-only bulbs still count in
+ * [bulbs], so a Wave or Together spread runs across the whole group. A group whose effects are
+ * empty can be given just to own bulbs that another group flashes.
  */
 data class EffectGroup(
     val slotId: Long,
     val base: LightState,
     val effects: GroupEffects,
     val bulbs: List<BulbAddress>,
+    val flashOnly: Set<BulbAddress> = emptySet(),
 )
 
 /**
@@ -66,6 +75,8 @@ class FxFire(
     val waveOffsetMs: Int,
     val targets: List<FxTarget>,
     val onRelease: (suspend (releaseMs: Int) -> Unit)? = null,
+    val strobe: StrobeSettings = StrobeSettings(),
+    val spin: SpinFxSettings = SpinFxSettings(),
 )
 
 /**
@@ -92,6 +103,15 @@ class EffectRunner @Inject constructor(
 
     private var runJob: Job? = null
     private var settleJob: Job? = null
+
+    /**
+     * An FX-only run playing while the current run waits out its start delay (a scene's fade):
+     * either the run that was playing when the scene started, or one [fire] starts during the wait.
+     */
+    private var handoffJob: Job? = null
+
+    /** The current run is still in its start delay; FX fired now play in [handoffJob]. */
+    private var waitingToStart = false
     private var groups: List<EffectGroup> = emptyList()
     private var runId = 0L
 
@@ -99,7 +119,17 @@ class EffectRunner @Inject constructor(
 
     private val pendingGroups = AtomicReference<List<EffectGroup>?>(null)
     private val pendingFlashes = ConcurrentLinkedQueue<Long>()
-    private val pendingFires = ConcurrentLinkedQueue<Pair<FxFire, Random>>()
+    private val pendingFires = ConcurrentLinkedQueue<LiveFire>()
+
+    /**
+     * FX fired since the last [stop] that may still be playing. A scene's effects starting (its
+     * [start]) replays them into the new run, so an FX fired while the scene fades in isn't cut
+     * off; [stop] (another scene taking over) ends them.
+     */
+    private val liveFires = ArrayList<LiveFire>()
+
+    /** Whether the current run plays only FX (no scene effects), so a starting scene can wait for it. */
+    private var fxOnlyRun = false
 
     /** What FX target bulbs outside the running groups show underneath, for settling on stop. */
     private val fxBases = HashMap<String, FxTarget>()
@@ -120,28 +150,73 @@ class EffectRunner @Inject constructor(
         random: Random = Random.Default,
         startDelayMs: Int = 0,
     ): Long {
-        runJob?.cancel()
+        val active = playable(groups)
+        // An FX-only run (an FX fired while this scene was being applied) keeps playing through
+        // the start delay; the new run takes its FX over when it begins.
+        val previous = runJob
+        val keepPrevious = previous != null && fxOnlyRun && startDelayMs > 0
+        if (keepPrevious && active.isEmpty()) {
+            // Nothing of the scene's own to run: the FX run simply carries on.
+            this.groups = active
+            return runId
+        }
+        handoffJob?.cancel()
+        handoffJob = if (keepPrevious) previous else null
+        if (!keepPrevious) previous?.cancel()
         settleJob?.cancel()
         settleJob = null
         pendingGroups.set(null)
         pendingFlashes.clear()
         pendingFires.clear()
-        fxBases.clear()
+        dropFinishedFires()
         runId++
-        val active = playable(groups)
         this.groups = active
+        fxOnlyRun = false
         if (active.isEmpty()) {
             runJob = null
+            liveFires.clear()
+            fxBases.clear()
             _isRunning.value = false
             return runId
         }
         _isRunning.value = true
         val id = runId
+        waitingToStart = startDelayMs > 0
         runJob = scope.launch {
             if (startDelayMs > 0) delay(startDelayMs.toLong())
+            // Whatever is playing FX through the wait stops here; its FX carry on in this run.
+            takeHandoff(id)?.cancelAndJoin()
+            requeueLiveFires(id)
             run(active, startFadeMs.coerceAtLeast(0), random, id)
         }
         return runId
+    }
+
+    /** Forgets FX that have certainly finished. */
+    private fun dropFinishedFires() {
+        val now = clock.nowMs()
+        liveFires.removeAll { it.endAt <= now }
+        if (liveFires.isEmpty()) fxBases.clear()
+    }
+
+    /** Run [id]'s wait is over: returns the handoff run to stop (if [id] is still current). */
+    @Synchronized
+    private fun takeHandoff(id: Long): Job? {
+        if (id != runId) return null
+        waitingToStart = false
+        val job = handoffJob
+        handoffJob = null
+        return job
+    }
+
+    /** Hands every FX still playing to run [id] (if it's still the current one), oldest first. */
+    @Synchronized
+    private fun requeueLiveFires(id: Long) {
+        if (id != runId) return
+        dropFinishedFires()
+        // The handoff run took what was queued during the wait; start from the full list.
+        pendingFires.clear()
+        for (live in liveFires) pendingFires.add(live)
     }
 
     /**
@@ -174,8 +249,15 @@ class EffectRunner @Inject constructor(
         if (fx.targets.isEmpty()) return
         // The first base seen for a bulb is its scene's; later FX on it see the same scene.
         for (target in fx.targets) fxBases.getOrPut(keyOf(target.address)) { target }
-        pendingFires.add(fx to random)
+        val live = LiveFire(fx, random.nextLong(), clock.nowMs())
+        liveFires.add(live)
+        pendingFires.add(live)
         if (runJob != null) {
+            // A run waiting out a scene's fade can't play it yet: an FX-only run plays it now,
+            // and hands it over when the scene's effects begin.
+            if (waitingToStart && handoffJob?.isActive != true) {
+                handoffJob = scope.launch { run(emptyList(), 0, random, HANDOFF_RUN) }
+            }
             wake.trySend(Unit)
             return
         }
@@ -183,6 +265,7 @@ class EffectRunner @Inject constructor(
         settleJob = null
         runId++
         val id = runId
+        fxOnlyRun = true
         _isRunning.value = true
         runJob = scope.launch { run(emptyList(), 0, random, id) }
     }
@@ -203,10 +286,15 @@ class EffectRunner @Inject constructor(
         val job = runJob
         val stopped = groups
         val fxStopped = ArrayList(fxBases.values)
+        handoffJob?.cancel()
+        handoffJob = null
+        waitingToStart = false
         runJob = null
         groups = emptyList()
         fxBases.clear()
         pendingFires.clear()
+        liveFires.clear()
+        fxOnlyRun = false
         _isRunning.value = false
         if (job == null) return null
         if (settleFadeMs < 0) {
@@ -232,13 +320,35 @@ class EffectRunner @Inject constructor(
     @Synchronized
     fun isCurrent(id: Long): Boolean = id == runId && runJob != null
 
-    private fun playable(groups: List<EffectGroup>): List<EffectGroup> =
-        groups.filter { it.effects.hasAny && it.bulbs.isNotEmpty() }
+    /**
+     * The groups worth running: ones with effects on bulbs they own or flash, plus effect-less
+     * owners of bulbs another group flashes (they carry those bulbs' look).
+     */
+    private fun playable(groups: List<EffectGroup>): List<EffectGroup> {
+        var flashed: HashSet<BulbAddress>? = null
+        for (group in groups) {
+            if (group.flashOnly.isEmpty() || !group.effects.flashes.enabled) continue
+            val set = flashed ?: HashSet<BulbAddress>().also { flashed = it }
+            set.addAll(group.flashOnly)
+        }
+        val shared = flashed
+        return groups.filter { group ->
+            val bulbs = group.bulbs
+            if (bulbs.isEmpty()) return@filter false
+            val effects = group.effects
+            if (effects.flashes.enabled) return@filter true
+            val owns = bulbs.any { it !in group.flashOnly }
+            if (effects.hasAny && owns) return@filter true
+            shared != null && bulbs.any { it in shared && it !in group.flashOnly }
+        }
+    }
 
     private suspend fun settle(groups: List<EffectGroup>, fxTargets: List<FxTarget>, fadeMs: Int): Unit = coroutineScope {
         val settled = HashSet<String>()
         for (group in groups) {
             for (address in group.bulbs) {
+                // A bulb another group owns settles on that group's base, not this one's.
+                if (address in group.flashOnly) continue
                 settled.add(keyOf(address))
                 launch { lights.turnOn(address, group.base, fadeMs) }
             }
@@ -255,16 +365,33 @@ class EffectRunner @Inject constructor(
     /** Ends run [id] once it has nothing left to play; false if a newer run has replaced it. */
     @Synchronized
     private fun finishRun(id: Long): Boolean {
-        if (id != runId) return false
+        if (id != runId) {
+            // A handoff run (or one already replaced) whose FX are over just ends; anything fired
+            // meanwhile is still queued for it.
+            return pendingFires.isEmpty()
+        }
         if (pendingFires.isNotEmpty() || pendingGroups.get() != null) return false
         runJob = null
         groups = emptyList()
         fxBases.clear()
+        liveFires.clear()
+        fxOnlyRun = false
         _isRunning.value = false
         return true
     }
 
     private fun keyOf(address: BulbAddress): String = address.protocolId + '/' + address.serial
+
+    /**
+     * One fired FX: what to play, the seed its whole plan comes from (so a new run rebuilds the
+     * same shots), and when it was fired, on [clock]. [endAt] is when it's certainly over (set
+     * once its shots are planned); [transitionDone] once its transition has been handed off.
+     */
+    private class LiveFire(val fire: FxFire, val seed: Long, val firedAt: Long) {
+        @Volatile var endAt: Long = Long.MAX_VALUE
+
+        @Volatile var transitionDone = false
+    }
 
     /* The loop */
 
@@ -273,11 +400,30 @@ class EffectRunner @Inject constructor(
      * single bulb borrowed by an FX from outside the running groups, dropped once its FX ends.
      */
     private class GroupState(var group: EffectGroup, val run: GroupEffectRun, val origin: Long, val forFx: Boolean = false) {
-        val tracks: Array<BulbTrack> = Array(group.bulbs.size) { BulbTrack(this, it, group.bulbs[it]) }
+        /** The bulbs this group owns (its flash-only ones belong to other groups' tracks). */
+        val tracks: Array<BulbTrack> = ownedTracks()
+
+        private fun ownedTracks(): Array<BulbTrack> {
+            val bulbs = group.bulbs
+            val flashOnly = group.flashOnly
+            val count = bulbs.size
+            val owned = ArrayList<BulbTrack>(count)
+            for (i in 0 until count) {
+                val address = bulbs[i]
+                if (address !in flashOnly) owned.add(BulbTrack(this, i, address))
+            }
+            return owned.toTypedArray()
+        }
     }
+
+    /** Another group's Flashes laid over a bulb: that group's state, and the bulb's index in it. */
+    private class FlashRef(val state: GroupState, val index: Int)
 
     /** One bulb's sending state, and the FX shot playing on it, if any. */
     private class BulbTrack(val owner: GroupState, val index: Int, val address: BulbAddress) {
+        /** Flashes from other lit groups that hold this bulb, laid over the owner's look. */
+        var extraFlashes: Array<FlashRef> = NO_FLASHES
+
         var lastKey = Long.MIN_VALUE
         var nextFrame = 0L
         val sent = Hsbk()
@@ -325,6 +471,7 @@ class EffectRunner @Inject constructor(
         /* Animate */
 
         var transition: (suspend (Int) -> Unit)? = null
+        var transitionFire: LiveFire? = null
         var transitionAt = 0L
         var transitionMs = 0
 
@@ -342,11 +489,13 @@ class EffectRunner @Inject constructor(
                 for (state in states) if (state.group.slotId == slotId) state.run.triggerFlash(t - state.origin)
             }
             while (true) {
-                val (fire, fireRandom) = pendingFires.poll() ?: break
-                states = applyFire(states, fire, fireRandom, t)
+                val live = pendingFires.poll() ?: break
+                states = applyFire(states, live, t, t0)
                 tracks = flatten(states)
                 // The newest FX decides how things end: its transition, or none for Return.
-                transition = fire.onRelease
+                val fire = live.fire
+                transition = if (live.transitionDone) null else fire.onRelease
+                transitionFire = live
                 if (transition != null) {
                     val (at, ms) = releaseOf(tracks, fire)
                     transitionAt = at
@@ -356,15 +505,30 @@ class EffectRunner @Inject constructor(
 
             var wakeAt = t + EffectTiming.FRAME_MS
             if (!online.get()) {
-                // Whatever the bulbs show after a Wi-Fi gap is unknown: resend everything.
-                for (track in tracks) track.hasSent = false
+                // Whatever the bulbs show after a Wi-Fi gap is unknown: resend everything. FX
+                // still run their course unseen, so an FX-only run ends as it would online.
+                for (track in tracks) {
+                    track.hasSent = false
+                    val shot = track.shot ?: continue
+                    if (t - track.shotStart < shot.end) continue
+                    track.shot = null
+                    track.shotEnding = false
+                    track.finished = true
+                    track.powerOffAfterShot = false
+                }
             } else {
                 for (track in tracks) {
                     val owner = track.owner
                     val run = owner.run
                     val bulb = track.index
                     val gt = t - owner.origin
-                    val key = run.flashKey(bulb, gt)
+                    var key = run.flashKey(bulb, gt)
+                    val extras = track.extraFlashes
+                    val extraCount = extras.size
+                    for (e in 0 until extraCount) {
+                        val extra = extras[e]
+                        key = key * 31 + extra.state.run.flashKey(extra.index, t - extra.state.origin)
+                    }
 
                     // The FX shot on this bulb, if any: ended, waiting for its (Wave) start, or playing.
                     var shot = track.shot
@@ -391,6 +555,17 @@ class EffectRunner @Inject constructor(
                             if (track.nextFrame <= gt) track.nextFrame = gt + EffectTiming.FRAME_MS
                         }
                         var frameTransition = run.sample(bulb, gt, work, EffectTiming.FRAME_TRANSITION_MS)
+                        // Other groups' flashes on top; the crispest edge sets the fade.
+                        for (e in 0 until extraCount) {
+                            val extra = extras[e]
+                            val edgeFade = extra.state.run.applyFlash(
+                                extra.index,
+                                t - extra.state.origin,
+                                work,
+                                EffectTiming.FRAME_TRANSITION_MS.toInt(),
+                            )
+                            if (edgeFade < frameTransition) frameTransition = edgeFade
+                        }
                         if (shot != null && shotTime >= 0) shot.apply(shotTime, work)?.let { frameTransition = it }
                         val last = track.sent
                         if (!track.hasSent || !looksSame(last, work)) {
@@ -416,6 +591,13 @@ class EffectRunner @Inject constructor(
                         val edgeAt = edge + owner.origin
                         if (edgeAt in (t + 1) until wakeAt) wakeAt = edgeAt
                     }
+                    for (e in 0 until extraCount) {
+                        val extra = extras[e]
+                        val extraEdge = extra.state.run.nextFlashEdge(extra.index, t - extra.state.origin)
+                        if (extraEdge == Long.MAX_VALUE) continue
+                        val edgeAt = extraEdge + extra.state.origin
+                        if (edgeAt in (t + 1) until wakeAt) wakeAt = edgeAt
+                    }
                     if (shot != null) {
                         val shotEdge = if (shotTime < 0) track.shotStart else track.shotStart + shot.nextEdge(shotTime)
                         if (shotEdge in (t + 1) until wakeAt) wakeAt = shotEdge
@@ -435,6 +617,7 @@ class EffectRunner @Inject constructor(
             if (pending != null) {
                 if (t >= transitionAt) {
                     transition = null
+                    transitionFire?.transitionDone = true
                     val ms = transitionMs
                     this@EffectRunner.scope.launch { pending(ms) }
                 } else if (transitionAt < wakeAt) {
@@ -460,24 +643,45 @@ class EffectRunner @Inject constructor(
      */
     private fun CoroutineScope.applyFire(
         states: ArrayList<GroupState>,
-        fire: FxFire,
-        random: Random,
+        live: LiveFire,
         t: Long,
+        t0: Long,
     ): ArrayList<GroupState> {
+        val fire = live.fire
         val byAddress = HashMap<String, BulbTrack>()
         for (state in states) for (track in state.tracks) byAddress[keyOf(track.address)] = track
         val targets = fire.targets
         val count = targets.size
+        // Every seed comes from the fire's own, drawn up front, so replaying it in a new run
+        // rebuilds exactly the same plan.
+        val random = Random(live.seed)
         val seed = random.nextLong()
-        val shared = if (fire.spread == Spread.TOGETHER) makeShot(fire, Random(seed)) else null
+        val seeds = LongArray(count) { random.nextLong() }
+        // Spin steps through the targets in order by itself: spread doesn't apply to it.
+        val spin = fire.primitive == FxPrimitive.SPIN
+        val spread = if (spin) Spread.TOGETHER else fire.spread
+        val shared = if (spread == Spread.TOGETHER && !spin) makeShot(fire, Random(seed), 0, count) else null
         val offset = fire.waveOffsetMs.coerceIn(EffectTiming.MIN_WAVE_OFFSET_MS, EffectTiming.MAX_WAVE_OFFSET_MS).toLong()
+        // When it was fired, on this run's clock (before the run began, for a replayed FX).
+        val firedAt = live.firedAt - t0
+        var endAt = Long.MIN_VALUE
         for (i in 0 until count) {
             val target = targets[i]
+            val shot = when {
+                spin -> makeShot(fire, Random(seed), i, count)
+                spread == Spread.TOGETHER -> shared!!
+                spread == Spread.WAVE -> makeShot(fire, Random(seed), i, count)
+                else -> makeShot(fire, Random(seeds[i]), i, count)
+            }
+            val shotStart = firedAt + if (spread == Spread.WAVE) offset * i else 0L
+            if (shotStart + shot.end > endAt) endAt = shotStart + shot.end
+            // Already over on this bulb (a replayed FX): leave the bulb to the scene.
+            if (t - shotStart >= shot.end) continue
             val key = keyOf(target.address)
             var track = byAddress[key]
             if (track == null) {
                 val group = EffectGroup(target.slotId, target.base, GroupEffects(), listOf(target.address))
-                val borrowed = GroupState(group, newRun(group, random), t, forFx = true)
+                val borrowed = GroupState(group, newRun(group, Random(seed)), t, forFx = true)
                 states.add(borrowed)
                 track = borrowed.tracks[0]
                 byAddress[key] = track
@@ -488,22 +692,22 @@ class EffectRunner @Inject constructor(
                     launch { lights.powerOn(address, 0) }
                 }
             }
-            track.shot = when (fire.spread) {
-                Spread.TOGETHER -> shared!!
-                Spread.WAVE -> makeShot(fire, Random(seed))
-                Spread.INDEPENDENT -> makeShot(fire, Random(random.nextLong()))
-            }
-            track.shotStart = t + if (fire.spread == Spread.WAVE) offset * i else 0L
+            track.shot = shot
+            track.shotStart = shotStart
             track.lastShotKey = Long.MIN_VALUE
             track.shotEnding = false
             track.finished = false
         }
+        if (endAt != Long.MIN_VALUE) live.endAt = endAt + t0
         return states
     }
 
-    private fun makeShot(fire: FxFire, random: Random): Shot = when (fire.primitive) {
+    /** One bulb's shot; [index] of [count] is its place among the targets (Spin's turn order). */
+    private fun makeShot(fire: FxFire, random: Random, index: Int, count: Int): Shot = when (fire.primitive) {
         FxPrimitive.PULSE -> PulseShot(fire.pulse, random)
         FxPrimitive.FLICKER -> FlickerShot(fire.flicker, random)
+        FxPrimitive.STROBE -> StrobeShot(fire.strobe)
+        FxPrimitive.SPIN -> SpinShot(fire.spin, index, count)
     }
 
     /** When the last target's final release starts, and how long the longest one is. */
@@ -548,7 +752,8 @@ class EffectRunner @Inject constructor(
         val result = ArrayList<GroupState>(update.size)
         for (group in update) {
             val kept = states.firstOrNull {
-                it.group.slotId == group.slotId && it.group.effects == group.effects && it.group.bulbs == group.bulbs
+                it.group.slotId == group.slotId && it.group.effects == group.effects && it.group.bulbs == group.bulbs &&
+                    it.group.flashOnly == group.flashOnly
             }
             if (kept != null) {
                 if (kept.group.base != group.base) {
@@ -572,6 +777,7 @@ class EffectRunner @Inject constructor(
         return result
     }
 
+    /** Every owned track, in group order, with other groups' flashes linked onto them. */
     private fun flatten(states: List<GroupState>): Array<BulbTrack> {
         var total = 0
         for (state in states) total += state.tracks.size
@@ -579,11 +785,36 @@ class EffectRunner @Inject constructor(
         var i = 0
         for (state in states) for (track in state.tracks) result[i++] = track
         @Suppress("UNCHECKED_CAST")
-        return result as Array<BulbTrack>
+        val tracks = result as Array<BulbTrack>
+        linkFlashes(states, tracks)
+        return tracks
+    }
+
+    /** Points each owned track at the other lit groups' flashes that also reach its bulb. */
+    private fun linkFlashes(states: List<GroupState>, tracks: Array<BulbTrack>) {
+        for (track in tracks) track.extraFlashes = NO_FLASHES
+        if (states.none { it.group.flashOnly.isNotEmpty() && it.group.effects.flashes.enabled }) return
+        val byAddress = HashMap<String, BulbTrack>(tracks.size * 2)
+        for (track in tracks) byAddress[keyOf(track.address)] = track
+        for (state in states) {
+            val group = state.group
+            if (group.flashOnly.isEmpty() || !group.effects.flashes.enabled) continue
+            val bulbs = group.bulbs
+            val count = bulbs.size
+            for (index in 0 until count) {
+                val address = bulbs[index]
+                if (address !in group.flashOnly) continue
+                val track = byAddress[keyOf(address)] ?: continue
+                track.extraFlashes = track.extraFlashes + FlashRef(state, index)
+            }
+        }
     }
 
     companion object {
         const val SETTLE_FADE_MS = 500
+
+        /** The id a handoff run plays under: never a current run's, so it never ends one. */
+        private const val HANDOFF_RUN = -1L
 
         /** Fade for bulbs joining a run that's already playing. */
         const val UPDATE_FADE_MS = 300
@@ -592,6 +823,8 @@ class EffectRunner @Inject constructor(
         const val TRANSITION_FALLBACK_MS = 500
 
         private const val NO_SHOT = -2L
+
+        private val NO_FLASHES = emptyArray<FlashRef>()
 
         /** Differences smaller than these aren't worth a packet. */
         private const val HUE_STEP = 0.5f

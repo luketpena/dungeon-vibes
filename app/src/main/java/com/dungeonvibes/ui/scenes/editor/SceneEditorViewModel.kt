@@ -3,22 +3,28 @@ package com.dungeonvibes.ui.scenes.editor
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.dungeonvibes.data.bulb.BulbRepository
+import com.dungeonvibes.data.db.BulbApplyTarget
+import com.dungeonvibes.data.db.BulbEntity
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.LightSlotEntity
 import com.dungeonvibes.data.db.SceneEntity
 import com.dungeonvibes.data.db.SceneLightEntity
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
+import com.dungeonvibes.data.scene.SceneSetup
+import com.dungeonvibes.data.scene.resolveScene
+import com.dungeonvibes.data.scene.withRestingColors
 import com.dungeonvibes.data.slot.LightSlotRepository
 import com.dungeonvibes.light.ApplicationScope
-import com.dungeonvibes.light.BulbAddress
 import com.dungeonvibes.light.LightController
+import com.dungeonvibes.light.LightMirror
 import com.dungeonvibes.light.LightState
 import com.dungeonvibes.light.ScenePlayer
 import com.dungeonvibes.light.fx.EffectGroup
 import com.dungeonvibes.light.fx.EffectRunner
-import com.dungeonvibes.light.fx.restingState
+import com.dungeonvibes.light.fx.effectGroupsFor
 import com.dungeonvibes.light.toAddress
+import com.dungeonvibes.light.toLightStateOrNull
 import com.dungeonvibes.ui.common.LightColors
 import dagger.assisted.Assisted
 import dagger.assisted.AssistedFactory
@@ -72,6 +78,13 @@ data class SceneEditorUiState(
     /** The "All lights" row: its switch is the scene's All lights, its panel the shared settings. */
     val roomRow: SlotRowState? = null,
     val rows: List<SlotRowState> = emptyList(),
+    /**
+     * Individual lights set in this scene, by bulb name: each wins over All lights and every group
+     * for its bulb (owner request). Their slot is the bulb's hidden individual-light slot.
+     */
+    val singleRows: List<SlotRowState> = emptyList(),
+    /** Bulbs that can still be added as individual lights. */
+    val addableBulbs: List<BulbEntity> = emptyList(),
 )
 
 sealed interface SceneEditorEvent {
@@ -122,69 +135,65 @@ class SceneEditorViewModel @AssistedInject constructor(
 
     /* Set once the groups and bulbs below have loaded, so the scene can take over the bulbs. */
     private val slotsReady = MutableStateFlow(false)
-    private val bulbsReady = MutableStateFlow(false)
-    private val bulbMapReady = MutableStateFlow(false)
+    private val setupReady = MutableStateFlow(false)
+    private val singlesReady = MutableStateFlow(false)
 
     private val slotList: StateFlow<List<LightSlotEntity>> =
         slots.observeSlots().onEach { slotsReady.value = true }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
-    /** Where each slot's bulbs are, for live preview, in name order (the order Wave follows). */
-    private val bulbsBySlot: StateFlow<Map<Long, List<BulbAddress>>> = combine(
-        slots.observeAssignments(),
-        bulbs.observeBulbs(),
-    ) { assignments, bulbList ->
-        val slotOf = HashMap<Long, Long>(assignments.size * 2)
-        for (assignment in assignments) slotOf[assignment.bulbId] = assignment.slotId
-        val result = HashMap<Long, MutableList<BulbAddress>>()
-        for (bulb in bulbList) {
-            val slotId = slotOf[bulb.id] ?: continue
-            result.getOrPut(slotId) { ArrayList(2) }.add(bulb.toAddress())
-        }
-        result
-    }.onEach { bulbMapReady.value = true }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyMap())
+    /** Bulbs, groups and individual-light slots: what the preview works the scene out against. */
+    private val setup: StateFlow<SceneSetup> =
+        slots.observeSetup(bulbs.observeBulbs()).onEach { setupReady.value = true }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, SceneSetup.EMPTY)
 
-    /** Every bulb in a group, in name order: what "All lights" previews on. */
-    private val assignedBulbs: StateFlow<List<BulbAddress>> = combine(
-        slots.observeAssignments(),
-        bulbs.observeBulbs(),
-    ) { assignments, bulbList ->
-        val assigned = HashSet<Long>(assignments.size * 2)
-        for (assignment in assignments) assigned.add(assignment.bulbId)
-        bulbList.filter { it.id in assigned }.map { it.toAddress() }
-    }.onEach { bulbsReady.value = true }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    /** Every bulb's individual-light slot that exists, named after its bulb. */
+    private val singleSlots: StateFlow<List<LightSlotEntity>> =
+        slots.observeBulbSlots().onEach { singlesReady.value = true }.stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
 
     val uiState: StateFlow<SceneEditorUiState> = combine(
         combine(draft, loaded) { current, isLoaded -> current to isLoaded },
         sceneRow,
-        slotList,
-        bulbsBySlot,
+        combine(slotList, singleSlots) { groups, singles -> groups to singles },
+        setup,
         livePreview,
-    ) { (current, isLoaded), row, slotRows, bulbMap, preview ->
+    ) { (current, isLoaded), row, (slotRows, singles), sceneSetup, preview ->
         if (current == null) {
             // Not loaded yet, or the scene doesn't exist (any more).
             return@combine SceneEditorUiState(isLoaded = isLoaded, isMissing = isLoaded)
         }
+        val filled = HashSet<Long>(sceneSetup.assignments.size * 2)
+        for (assignment in sceneSetup.assignments) filled.add(assignment.slotId)
         val rows = ArrayList<SlotRowState>(slotRows.size)
         for (slot in slotRows) {
             rows.add(
                 SlotRowState(
                     slot,
                     current.lights[slot.id],
-                    !bulbMap[slot.id].isNullOrEmpty(),
+                    slot.id in filled,
                     current.effects[slot.id],
                     forcedOn = current.allLightsOn,
                 ),
             )
         }
+        // Individual lights: the bulbs this scene sets one by one, and the rest, which can be added.
+        val singleRows = ArrayList<SlotRowState>()
+        val taken = HashSet<Long>()
+        for (slot in singles) {
+            val light = current.lights[slot.id] ?: continue
+            singleRows.add(SlotRowState(slot, light, hasBulbs = true, effects = current.effects[slot.id]))
+            slot.bulbId?.let(taken::add)
+        }
+        val addable = sceneSetup.bulbs.filter { it.id !in taken }
         val room = roomSlotId
         val roomRow = if (room == NO_ROOM) {
             null
         } else {
             SlotRowState(
                 slot = LightSlotEntity(id = room, name = "", sortOrder = -1, isRoom = true),
-                // The row reads as on exactly when the scene's All lights is.
-                light = current.lights[room]?.copy(isOn = current.allLightsOn),
-                hasBulbs = bulbMap.isNotEmpty(),
+                // The row reads as on exactly when the scene's All lights is; with no settings yet
+                // (a new default-lighting scene) it shows the defaults it would get when changed.
+                light = (current.lights[room] ?: defaultLight(room)).copy(isOn = current.allLightsOn),
+                hasBulbs = sceneSetup.assignments.isNotEmpty(),
                 effects = current.effects[room],
             )
         }
@@ -199,6 +208,8 @@ class SceneEditorViewModel @AssistedInject constructor(
             allLightsOn = current.allLightsOn,
             roomRow = roomRow,
             rows = rows,
+            singleRows = singleRows,
+            addableBulbs = addable,
         )
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SceneEditorUiState())
 
@@ -210,6 +221,9 @@ class SceneEditorViewModel @AssistedInject constructor(
     private var allLightsDirty = false
     private val dirtySlots = HashSet<Long>()
     private val dirtyEffects = HashSet<Long>()
+
+    /** Individual lights taken out of the scene, to delete on the next save (before any re-add). */
+    private val removedSlots = HashSet<Long>()
     private var saveJob: Job? = null
 
     /* Live effects preview, main thread only. */
@@ -221,18 +235,34 @@ class SceneEditorViewModel @AssistedInject constructor(
      */
     private var activated = false
 
-    /** Slots whose effects are playing on their bulbs. */
-    private val effectSlots = HashSet<Long>()
     private var effectRunId: Long? = null
     private var runnerPushJob: Job? = null
+
+    /** The runner groups waiting for the throttle (see [scheduleRunnerPush]). */
+    private var pendingGroups: List<EffectGroup>? = null
+
+    /** Keys (LightMirror.keyOf) of the bulbs the effect runner is driving. */
+    private var runnerBulbs: Set<String> = emptySet()
+
+    /** Slots whose effects are running (for Flash now). */
+    private var runnerSlots: Set<Long> = emptySet()
+
+    /** Bulbs just taken out of the runner, waiting a moment before their plain preview. */
+    private var heldBack: Set<String> = emptySet()
+
+    /** What each bulb was last sent as a plain preview (null: off), so unchanged bulbs aren't resent. */
+    private val previewed = HashMap<String, LightState?>()
 
     init {
         viewModelScope.launch {
             load()
             // Opening a scene makes it the active scene, shown in full (owner decision): wait for
             // the groups and bulbs, then take over the bulbs.
-            combine(slotsReady, bulbsReady, bulbMapReady) { a, b, c -> a && b && c }.first { it }
+            combine(slotsReady, setupReady, singlesReady) { a, b, c -> a && b && c }.first { it }
             if (livePreview.value && draft.value != null) previewAll()
+            // Bulbs, groups or individual-light slots changing (an individual light just added)
+            // change what the bulbs should show.
+            setup.collect { if (activated && livePreview.value) refreshPreview() }
         }
         viewModelScope.launch {
             // If the scene disappears while open (deleted elsewhere), drop the draft so the
@@ -248,6 +278,7 @@ class SceneEditorViewModel @AssistedInject constructor(
                     allLightsDirty = false
                     dirtySlots.clear()
                     dirtyEffects.clear()
+                    removedSlots.clear()
                 }
             }
         }
@@ -312,27 +343,6 @@ class SceneEditorViewModel @AssistedInject constructor(
         if (livePreview.value) previewAll()
     }
 
-    /** What a slot plays as. The room row is always lit (All lights itself is its switch). */
-    private fun effectiveLight(current: Draft, slotId: Long): SceneLightEntity? {
-        val light = current.lights[slotId]
-        if (slotId != roomSlotId) return light
-        val base = light ?: defaultLight(slotId)
-        return if (base.isOn) base else base.copy(isOn = true)
-    }
-
-    /** The slots that drive the bulbs right now: the room alone with All lights on, else the groups. */
-    private fun activeSlotIds(current: Draft): List<Long> {
-        if (current.allLightsOn && roomSlotId != NO_ROOM) return listOf(roomSlotId)
-        val slotRows = slotList.value
-        val result = ArrayList<Long>(slotRows.size)
-        for (slot in slotRows) result.add(slot.id)
-        return result
-    }
-
-    /** A slot's bulbs; the room's are every bulb in a group. */
-    private fun bulbsFor(slotId: Long): List<BulbAddress>? =
-        if (slotId == roomSlotId) assignedBulbs.value else bulbsBySlot.value[slotId]
-
     /* Slot settings */
 
     fun setOn(slotId: Long, on: Boolean) = editLight(slotId) { it.copy(isOn = on) }
@@ -356,7 +366,7 @@ class SceneEditorViewModel @AssistedInject constructor(
         draft.value = current.copy(lights = current.lights + (slotId to after))
         dirtySlots.add(slotId)
         scheduleSave()
-        if (livePreview.value) refreshPreview(slotId)
+        if (livePreview.value) refreshPreview()
     }
 
     /** A slot with no settings yet starts off, warm white at 2700 K, with a warm orange ready for Color. */
@@ -371,6 +381,37 @@ class SceneEditorViewModel @AssistedInject constructor(
         brightness = LightColors.DEFAULT_BRIGHTNESS,
     )
 
+    /* Individual lights */
+
+    /**
+     * Adds bulbs to this scene as individual lights, on, in the default warm white. Each wins over
+     * All lights and every group for its bulb (owner request), and has the full set of controls.
+     */
+    fun addSingleLights(bulbIds: Collection<Long>) {
+        if (bulbIds.isEmpty()) return
+        viewModelScope.launch {
+            for (bulbId in bulbIds) {
+                val slotId = slots.ensureBulbSlot(bulbId)
+                if (draft.value?.lights?.containsKey(slotId) == true) continue
+                editLight(slotId) { it.copy(isOn = true) }
+            }
+        }
+    }
+
+    fun addSingleLight(bulbId: Long) = addSingleLights(listOf(bulbId))
+
+    /** Takes an individual light out of the scene: its bulb follows All lights or its groups again. */
+    fun removeSingleLight(slotId: Long) {
+        val current = draft.value ?: return
+        if (!current.lights.containsKey(slotId)) return
+        draft.value = current.copy(lights = current.lights - slotId, effects = current.effects - slotId)
+        dirtySlots.remove(slotId)
+        dirtyEffects.remove(slotId)
+        removedSlots.add(slotId)
+        scheduleSave()
+        if (livePreview.value) refreshPreview()
+    }
+
     /* Effects */
 
     /**
@@ -384,7 +425,7 @@ class SceneEditorViewModel @AssistedInject constructor(
         draft.value = current.copy(effects = current.effects + (slotId to effects))
         dirtyEffects.add(slotId)
         scheduleSave()
-        if (livePreview.value) refreshPreview(slotId)
+        if (livePreview.value) refreshPreview()
     }
 
     /**
@@ -407,11 +448,11 @@ class SceneEditorViewModel @AssistedInject constructor(
 
     /** Plays a burst now on a group whose Flashes are previewing, so its shape can be judged. */
     fun flashNow(slotId: Long) {
-        if (!livePreview.value || slotId !in effectSlots) return
+        if (!livePreview.value || slotId !in runnerSlots) return
         // A pending push may be about to restart the group; let it land first.
         if (runnerPushJob?.isActive == true) {
             runnerPushJob?.cancel()
-            pushRunner()
+            pendingGroups?.let(::pushRunner)
         }
         effectRunner.triggerFlash(slotId)
     }
@@ -419,8 +460,9 @@ class SceneEditorViewModel @AssistedInject constructor(
     /* Live preview */
 
     /**
-     * Turning preview on shows the whole scene as edited so far: slots without settings go off,
-     * groups with effects run them. Turning it off stops effects, settling those bulbs on their base.
+     * Live preview is always on in the app (owner decision: no switch); this stays for tests that
+     * check edits without the bulbs. On shows the whole scene as edited so far: slots without
+     * settings go off, groups with effects run them. Off stops effects, settling bulbs on their base.
      */
     fun setLivePreview(enabled: Boolean) {
         livePreview.value = enabled
@@ -432,102 +474,107 @@ class SceneEditorViewModel @AssistedInject constructor(
     }
 
     private fun previewAll() {
-        val current = draft.value ?: return
+        if (draft.value == null) return
         if (!activated) {
             activated = true
             player.activate(sceneId, isDefault = isDefaultScene)
             // Whatever ran before is gone; this scene starts its own run from scratch.
-            effectSlots.clear()
             effectRunId = null
+            runnerBulbs = emptySet()
+            runnerSlots = emptySet()
+            heldBack = emptySet()
+            previewed.clear()
         }
-        val active = activeSlotIds(current)
-        val count = active.size
-        // Slots that stopped driving the bulbs (All lights switched) leave the effect runner.
-        var leftEffects = effectSlots.retainAll(active.toSet())
-        val plain = ArrayList<Long>(count)
-        for (i in 0 until count) {
-            val slotId = active[i]
-            if (runsEffects(effectiveLight(current, slotId), current.effects[slotId])) {
-                effectSlots.add(slotId)
-            } else {
-                if (effectSlots.remove(slotId)) leftEffects = true
-                plain.add(slotId)
-            }
-        }
-        runnerPushJob?.cancel()
-        pushRunner()
-        handOff(plain, leftEffects)
+        showDraft(immediate = true)
     }
 
-    /** Shows one slot's change: through the effect runner if it has effects, else as a plain preview. */
-    private fun refreshPreview(slotId: Long) {
-        // Not driving the bulbs yet (still loading, or live preview was off): take over first, which
-        // shows the whole scene, this change included.
+    /** Shows the latest edit. Not driving the bulbs yet: takes over first, which shows it all. */
+    private fun refreshPreview() {
         if (!activated) {
             previewAll()
             return
         }
-        val current = draft.value ?: return
-        // Only the slots driving the bulbs are shown: the room with All lights on, else the groups.
-        if (current.allLightsOn != (slotId == roomSlotId)) return
-        if (runsEffects(effectiveLight(current, slotId), current.effects[slotId])) {
-            effectSlots.add(slotId)
-            scheduleRunnerPush()
-            return
-        }
-        if (effectSlots.remove(slotId)) {
-            // Take the group out of the runner first, then show its plain settings.
-            runnerPushJob?.cancel()
-            pushRunner()
-            handOff(listOf(slotId), leftEffects = true)
-            return
-        }
-        previewSlot(slotId, effectiveLight(current, slotId))
+        showDraft(immediate = false)
     }
 
     /**
-     * Plain previews for [slotIds]. When a group has just left the effect runner, waits a moment
-     * so a frame still in flight can't land after (and over) its plain settings.
+     * Shows the draft on the bulbs, worked out exactly as playing it would be (SceneResolver: each
+     * bulb's individual light, All lights, or its highest lit group). Bulbs whose slot runs effects,
+     * or that another lit group flashes, go to the effect runner; the rest get plain previews. While
+     * something is dragged the runner takes new settings at most every [RUNNER_THROTTLE_MS], except
+     * when the bulbs it drives change. A bulb leaving the runner waits a moment, so a frame still in
+     * flight can't land after (and over) its plain preview.
      */
-    private fun handOff(slotIds: List<Long>, leftEffects: Boolean) {
-        if (slotIds.isEmpty()) return
-        if (!leftEffects) {
-            val current = draft.value ?: return
-            for (slotId in slotIds) previewSlot(slotId, effectiveLight(current, slotId))
-            return
-        }
-        viewModelScope.launch {
-            delay(EFFECT_HANDOFF_MS)
-            if (!livePreview.value) return@launch
-            val current = draft.value ?: return@launch
-            for (slotId in slotIds) {
-                if (slotId !in effectSlots) previewSlot(slotId, effectiveLight(current, slotId))
+    private fun showDraft(immediate: Boolean) {
+        val current = draft.value ?: return
+        val targets = resolveDraft(current)
+        val groups = effectGroupsFor(targets, current.effects::get)
+        val inRunner = HashSet<String>()
+        val slotsRunning = HashSet<Long>(groups.size * 2)
+        for (group in groups) {
+            slotsRunning.add(group.slotId)
+            for (address in group.bulbs) {
+                if (address !in group.flashOnly) inRunner.add(LightMirror.keyOf(address.protocolId, address.serial))
             }
         }
+        val left = runnerBulbs - inRunner
+        val changed = inRunner != runnerBulbs
+        runnerBulbs = inRunner
+        runnerSlots = slotsRunning
+        if (immediate || changed) {
+            runnerPushJob?.cancel()
+            pushRunner(groups)
+        } else {
+            pendingGroups = groups
+            scheduleRunnerPush()
+        }
+        if (left.isNotEmpty()) {
+            heldBack = heldBack + left
+            viewModelScope.launch {
+                delay(EFFECT_HANDOFF_MS)
+                heldBack = heldBack - left
+                if (livePreview.value) showPlain(null)
+            }
+        }
+        showPlain(targets)
     }
 
-    private fun runsEffects(light: SceneLightEntity?, effects: GroupEffects?): Boolean =
-        light != null && light.isOn && effects != null && effects.hasAny
+    /** What every bulb shows in the draft, resting colors applied. */
+    private fun resolveDraft(current: Draft): List<BulbApplyTarget> =
+        resolveScene(setup.value, current.lights, current.allLightsOn, roomSlotId.takeIf { it != NO_ROOM })
+            .withRestingColors(current.effects::get)
+
+    /** Plain previews for the bulbs the runner isn't driving ([targets], or the draft worked out afresh). */
+    private fun showPlain(targets: List<BulbApplyTarget>?) {
+        val list = targets ?: resolveDraft(draft.value ?: return)
+        val count = list.size
+        for (i in 0 until count) {
+            val target = list[i]
+            val key = LightMirror.keyOf(target.protocolId, target.serial)
+            if (key in runnerBulbs) {
+                // Driven by the runner: resend its plain look when it comes back out.
+                previewed.remove(key)
+                continue
+            }
+            if (key in heldBack) continue
+            val state = target.toLightStateOrNull()
+            if (previewed.containsKey(key) && previewed[key] == state) continue
+            previewed[key] = state
+            lights.preview(target.toAddress(), state)
+        }
+    }
 
     /** Hands the runner the latest settings at most every [RUNNER_THROTTLE_MS], so drags stay smooth. */
     private fun scheduleRunnerPush() {
         if (runnerPushJob?.isActive == true) return
         runnerPushJob = viewModelScope.launch {
             delay(RUNNER_THROTTLE_MS)
-            pushRunner()
+            pendingGroups?.let(::pushRunner)
         }
     }
 
-    private fun pushRunner() {
-        val current = draft.value ?: return
-        val groups = ArrayList<EffectGroup>(effectSlots.size)
-        for (slotId in effectSlots) {
-            val light = effectiveLight(current, slotId) ?: continue
-            val effects = current.effects[slotId] ?: continue
-            if (!runsEffects(light, effects)) continue
-            val addresses = bulbsFor(slotId) ?: continue
-            groups.add(EffectGroup(slotId, restingState(light.toLightState(), effects), effects, addresses))
-        }
+    private fun pushRunner(groups: List<EffectGroup>) {
+        pendingGroups = null
         if (groups.isEmpty()) {
             effectRunId?.let { effectRunner.stopIfCurrent(it, settleFadeMs = -1) }
             effectRunId = null
@@ -538,18 +585,15 @@ class SceneEditorViewModel @AssistedInject constructor(
 
     private fun stopEffectsPreview() {
         runnerPushJob?.cancel()
-        effectSlots.clear()
+        pendingGroups = null
+        runnerBulbs = emptySet()
+        runnerSlots = emptySet()
+        heldBack = emptySet()
+        previewed.clear()
         effectRunId?.let { effectRunner.stopIfCurrent(it) }
         effectRunId = null
         // Turning live preview back on takes over the bulbs again.
         activated = false
-    }
-
-    private fun previewSlot(slotId: Long, light: SceneLightEntity?) {
-        val addresses = bulbsFor(slotId) ?: return
-        val state = if (light != null && light.isOn) light.toLightState() else null
-        val count = addresses.size
-        for (i in 0 until count) lights.preview(addresses[i], state)
     }
 
     /* Adventure-scene actions */
@@ -606,24 +650,27 @@ class SceneEditorViewModel @AssistedInject constructor(
     private class PendingWrite(
         val details: Pair<String, Int>?,
         val allLightsOn: Boolean?,
+        val removed: List<Long>,
         val lights: List<SceneLightEntity>,
         val effects: List<Pair<Long, GroupEffects>>,
     )
 
     private fun takePending(): PendingWrite? {
         val current = draft.value ?: return null
-        if (!detailsDirty && !allLightsDirty && dirtySlots.isEmpty() && dirtyEffects.isEmpty()) return null
+        if (!detailsDirty && !allLightsDirty && dirtySlots.isEmpty() && dirtyEffects.isEmpty() && removedSlots.isEmpty()) return null
         val details = if (detailsDirty) current.name.trim().ifEmpty { current.name } to current.fadeMs else null
         val changed = ArrayList<SceneLightEntity>(dirtySlots.size)
         for (slotId in dirtySlots) current.lights[slotId]?.let(changed::add)
         val changedEffects = ArrayList<Pair<Long, GroupEffects>>(dirtyEffects.size)
         for (slotId in dirtyEffects) current.effects[slotId]?.let { changedEffects.add(slotId to it) }
         val allLights = if (allLightsDirty) current.allLightsOn else null
+        val removed = ArrayList(removedSlots)
         detailsDirty = false
         allLightsDirty = false
         dirtySlots.clear()
         dirtyEffects.clear()
-        return PendingWrite(details, allLights, changed, changedEffects)
+        removedSlots.clear()
+        return PendingWrite(details, allLights, removed, changed, changedEffects)
     }
 
     private suspend fun write(pending: PendingWrite) {
@@ -631,6 +678,8 @@ class SceneEditorViewModel @AssistedInject constructor(
         if (scenes.getScene(sceneId) == null) return
         pending.details?.let { (name, fade) -> scenes.updateSceneDetails(sceneId, name, fade) }
         pending.allLightsOn?.let { scenes.setAllLightsOn(sceneId, it) }
+        // Removals first: an individual light taken out and added back is saved fresh.
+        for (slotId in pending.removed) scenes.removeSceneLight(sceneId, slotId)
         for (light in pending.lights) scenes.saveSceneLight(light)
         // After the lights: a group's effects need its settings row to exist.
         for ((slotId, effects) in pending.effects) scenes.saveGroupEffects(sceneId, slotId, effects)
@@ -639,7 +688,7 @@ class SceneEditorViewModel @AssistedInject constructor(
     override fun onCleared() {
         // The edited scene stays active and keeps playing, effects and all. Hand the runner any
         // settings that were still waiting for their throttle (viewModelScope is cancelled now).
-        if (runnerPushJob?.isActive == true && livePreview.value) pushRunner()
+        if (runnerPushJob?.isActive == true && livePreview.value) pendingGroups?.let(::pushRunner)
         // viewModelScope is already cancelled here, so finish any pending save on the app scope.
         val pending = takePending() ?: return
         appScope.launch { write(pending) }

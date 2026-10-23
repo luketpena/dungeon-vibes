@@ -6,9 +6,12 @@ import com.dungeonvibes.data.bulb.BulbDiscovery
 import com.dungeonvibes.data.bulb.BulbRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
 import com.dungeonvibes.light.CommandedLight
+import com.dungeonvibes.light.DimmerStore
 import com.dungeonvibes.light.LightMirror
 import com.dungeonvibes.light.LocalNetworkPermission
+import com.dungeonvibes.light.MasterDimmer
 import com.dungeonvibes.light.NetworkStatus
+import com.dungeonvibes.light.ScenePlayer
 import com.dungeonvibes.light.fx.EffectRunner
 import com.dungeonvibes.light.fx.NotificationPermission
 import com.dungeonvibes.ui.adventures.play.buildGlowBulbs
@@ -36,6 +39,9 @@ class MainViewModel @Inject constructor(
     private val notifications: NotificationPermission,
     slots: LightSlotRepository,
     private val mirror: LightMirror,
+    private val player: ScenePlayer,
+    dimmer: MasterDimmer,
+    dimmerStore: DimmerStore,
 ) : ViewModel() {
 
     /** Every assigned bulb, by group order then name ([LightMirror] keys), for the nav edge's light. */
@@ -74,6 +80,8 @@ class MainViewModel @Inject constructor(
     val needsLocalNetworkPermission: Boolean get() = !localNetwork.isGranted()
 
     init {
+        // Before anything is sent: nothing is lit yet, so the level just takes effect.
+        dimmer.set(dimmerStore.load())
         viewModelScope.launch {
             _startDestination.value = startDestinationFor(bulbRepository.hasAnyBulbs())
         }
@@ -87,6 +95,10 @@ class MainViewModel @Inject constructor(
         if (startupScanDone) return
         if (!localNetwork.isGranted()) return
         startupScanDone = true
-        viewModelScope.launch { bulbDiscovery.scan() }
+        viewModelScope.launch {
+            bulbDiscovery.scan()
+            // What the bulbs said decides whether the lights menu starts as on or off.
+            player.syncWithBulbs(bulbDiscovery.reportedPower)
+        }
     }
 }

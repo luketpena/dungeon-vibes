@@ -22,17 +22,47 @@ class LightSlotRepositoryTest : DatabaseTest() {
     }
 
     @Test
-    fun bulbBelongsToAtMostOneSlot_assigningMovesIt(): Unit = runBlocking {
+    fun aBulbCanBeInSeveralGroups_assigningAddsIt(): Unit = runBlocking {
         val ceiling = slots.createSlot("Ceiling")
         val lamp = slots.createSlot("Lamp")
         val bulb = bulbs.recordSeen("fake", "aa", "10.0.0.1", "Bulb")
 
         slots.assignBulb(bulb, ceiling)
         slots.assignBulb(bulb, lamp)
+        // Assigning again changes nothing.
+        slots.assignBulb(bulb, lamp)
 
-        val assignments = slots.observeAssignments().first()
-        assertEquals(1, assignments.size)
-        assertEquals(lamp, assignments.single().slotId)
+        assertEquals(setOf(ceiling, lamp), slots.observeAssignments().first().map { it.slotId }.toSet())
+    }
+
+    @Test
+    fun setInGroup_addsOrRemovesOneGroup_leavingTheOthers(): Unit = runBlocking {
+        val ceiling = slots.createSlot("Ceiling")
+        val lamp = slots.createSlot("Lamp")
+        val bulb = bulbs.recordSeen("fake", "aa", "10.0.0.1", "Bulb")
+        slots.setInGroup(bulb, ceiling, true)
+        slots.setInGroup(bulb, lamp, true)
+
+        slots.setInGroup(bulb, ceiling, false)
+
+        assertEquals(listOf(lamp), slots.observeAssignments().first().map { it.slotId })
+    }
+
+    @Test
+    fun individualLightSlots_areHidden_oneEach_andGoWithTheirBulb(): Unit = runBlocking {
+        slots.createSlot("Ceiling")
+        val bulb = bulbs.recordSeen("fake", "aa", "10.0.0.1", "Corner")
+
+        val first = slots.ensureBulbSlot(bulb)
+        assertEquals(first, slots.ensureBulbSlot(bulb))
+        // Not a group: never listed in Setup.
+        assertEquals(listOf("Ceiling"), slots.observeSlots().first().map { it.name })
+        // Named after its bulb.
+        assertEquals(listOf("Corner"), slots.observeBulbSlots().first().map { it.name })
+
+        bulbs.remove(bulb)
+
+        assertTrue(slots.observeBulbSlots().first().isEmpty())
     }
 
     @Test
@@ -59,7 +89,7 @@ class LightSlotRepositoryTest : DatabaseTest() {
     }
 
     @Test
-    fun setSlotBulbs_makesTheListExact_movingBulbsFromOtherSlots(): Unit = runBlocking {
+    fun setSlotBulbs_makesTheListExact_leavingOtherGroupsAlone(): Unit = runBlocking {
         val ceiling = slots.createSlot("Ceiling")
         val lamp = slots.createSlot("Lamp")
         val a = bulbs.recordSeen("fake", "aa", "10.0.0.1", "A")
@@ -69,12 +99,12 @@ class LightSlotRepositoryTest : DatabaseTest() {
         slots.assignBulb(b, ceiling)
         slots.assignBulb(c, lamp)
 
-        // Ceiling keeps B, drops A, and takes C from Lamp.
+        // Ceiling keeps B, drops A, and adds C, which stays in Lamp too.
         slots.setSlotBulbs(ceiling, setOf(b, c))
 
         val bySlot = slots.observeAssignments().first().groupBy({ it.slotId }, { it.bulbId })
         assertEquals(setOf(b, c), bySlot[ceiling]?.toSet())
-        assertEquals(null, bySlot[lamp])
+        assertEquals(listOf(c), bySlot[lamp])
         assertTrue(slots.observeAssignments().first().none { it.bulbId == a })
     }
 
@@ -110,5 +140,20 @@ class LightSlotRepositoryTest : DatabaseTest() {
 
         slots.reorder(listOf(b, a))
         assertEquals(listOf(b, a), slots.observeSlots().first().map { it.id })
+    }
+
+    @Test
+    fun groupBulbs_keepTheOrderTheyWereAdded_andCanBeReordered(): Unit = runBlocking {
+        val ceiling = slots.createSlot("Ceiling")
+        val a = bulbs.recordSeen("fake", "aa", "10.0.0.1", "A")
+        val b = bulbs.recordSeen("fake", "bb", "10.0.0.2", "B")
+        val c = bulbs.recordSeen("fake", "cc", "10.0.0.3", "C")
+
+        slots.addBulbs(ceiling, listOf(c, a))
+        slots.addBulbs(ceiling, listOf(a, b)) // A is already in: it keeps its place
+        assertEquals(listOf(c, a, b), slots.observeAssignments().first().map { it.bulbId })
+
+        slots.reorderBulbs(ceiling, listOf(b, c, a))
+        assertEquals(listOf(b, c, a), slots.observeAssignments().first().map { it.bulbId })
     }
 }

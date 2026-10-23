@@ -10,6 +10,7 @@ import com.dungeonvibes.data.db.FxEntity
 import com.dungeonvibes.data.db.FxTransition
 import com.dungeonvibes.data.db.PulseSettings
 import com.dungeonvibes.data.fx.FxItem
+import com.dungeonvibes.data.fx.FxRepository
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneLightEntity
 import com.dungeonvibes.data.scene.GroupEffects
@@ -23,6 +24,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -421,5 +423,104 @@ class ScenePlayerTest : DatabaseTest() {
         f.player.turnOffLights()
         f.player.play(calm)
         assertEquals(RoomLights(), f.player.room.value)
+    }
+
+    /* Launch state and reachability (owner requests, Oct 23, 2026) */
+
+    private suspend fun twoBulbs(slots: LightSlotRepository, bulbs: BulbRepository): Pair<Long, Long> {
+        val ceiling = slots.createSlot("Ceiling")
+        val one = bulbs.recordSeen(FakeLightAdapter.PROTOCOL_ID, FakeLightAdapter.serialFor(1), "0.0.0.1", "One")
+        val two = bulbs.recordSeen(FakeLightAdapter.PROTOCOL_ID, FakeLightAdapter.serialFor(2), "0.0.0.2", "Two")
+        slots.assignBulb(one, ceiling)
+        slots.assignBulb(two, ceiling)
+        return one to two
+    }
+
+    @Test
+    fun syncWithBulbs_everyAssignedBulbOff_startsTheMenuOff_oneOnLeavesItOn(): Unit = runBlocking {
+        val scenes = SceneRepository(db, time)
+        val (one, two) = twoBulbs(LightSlotRepository(db), BulbRepository(db, time))
+
+        val lit = player(scenes, FakeLightAdapter())
+        lit.syncWithBulbs(mapOf(one to false, two to true))
+        assertFalse(lit.room.value.lightsOff)
+
+        val dark = player(scenes, FakeLightAdapter())
+        dark.syncWithBulbs(mapOf(one to false, two to false))
+        assertTrue(dark.room.value.lightsOff)
+    }
+
+    @Test
+    fun syncWithBulbs_afterTheLightsWereUsed_changesNothing(): Unit = runBlocking {
+        val scenes = SceneRepository(db, time)
+        val (one, two) = twoBulbs(LightSlotRepository(db), BulbRepository(db, time))
+        val player = player(scenes, FakeLightAdapter())
+        player.turnOffLights()
+        player.turnOnLights()
+
+        player.syncWithBulbs(mapOf(one to false, two to false))
+
+        assertFalse(player.room.value.lightsOff)
+    }
+
+    @Test
+    fun play_tellsReachabilityWhichBulbsAnswered(): Unit = runBlocking {
+        val scenes = SceneRepository(db, time)
+        val slots = LightSlotRepository(db)
+        val (one, two) = twoBulbs(slots, BulbRepository(db, time))
+        val fake = FakeLightAdapter()
+        fake.offlineSerials += FakeLightAdapter.serialFor(2)
+        val controller = LightController(setOf(fake), lightScope)
+        val reachability = BulbReachability()
+        val player = ScenePlayer(scenes, controller, realTimeEffectRunner(controller, lightScope), reachability)
+        val ceiling = slots.observeSlots().first().single().id
+        val scene = scenes.createLibraryScene("Storm")
+        scenes.saveSceneLight(SceneLightEntity(scene, ceiling, true, LightMode.WHITE, 0f, 0f, 6500, 1f))
+
+        player.play(scene)
+
+        assertFalse(reachability.state.value.isUnreachable(one))
+        assertTrue(reachability.state.value.isUnreachable(two))
+    }
+
+    /* Intro FX (FX4b, owner request Oct 23, 2026) */
+
+    @Test
+    fun play_withAnIntroFx_playsItFirst_thenLandsInTheSceneOverItsRelease(): Unit = runBlocking {
+        val fake = FakeLightAdapter()
+        val scenes = SceneRepository(db, time)
+        val slots = LightSlotRepository(db)
+        val ceiling = slots.createSlot("Ceiling")
+        val serial = FakeLightAdapter.serialFor(1)
+        slots.assignBulb(BulbRepository(db, time).recordSeen(FakeLightAdapter.PROTOCOL_ID, serial, "0.0.0.1", "One"), ceiling)
+        val fx = FxRepository(db, time)
+        val heal = fx.create("Heal")
+        val item = fx.get(heal)!!
+        fx.save(item.copy(fx = item.fx.copy(pulse = PulseSettings(color = FxColor.color(120f), attackMs = 50, holdMs = 100, releaseMs = 300))))
+        val scene = scenes.createLibraryScene("Dawn")
+        scenes.updateSceneDetails(scene, "Dawn", fadeMs = 5_000)
+        scenes.saveSceneLight(SceneLightEntity(scene, ceiling, true, LightMode.COLOR, 240f, 1f, 2700, 0.3f))
+        scenes.setIntroFx(scene, heal)
+        val controller = LightController(setOf(fake), lightScope)
+        val player = ScenePlayer(scenes, controller, realTimeEffectRunner(controller, lightScope), BulbReachability(), fx)
+
+        player.play(scene)
+        // Marked active at once, while the FX plays.
+        assertEquals(scene, player.active.value?.sceneId)
+        delay(800)
+
+        val commands = fake.commands.value.filter { it.serial == serial }
+        assertTrue(commands.any { it is Command.SetState && !it.reliable && kotlin.math.abs(it.state.hue - 120f) < 0.5f })
+        // The scene lands over the FX's 300 ms release, not its own 5 s fade.
+        val landing = commands.filterIsInstance<Command.SetState>().last { it.reliable }
+        assertEquals(240f, landing.state.hue, 0.5f)
+        assertEquals(300, landing.fadeMs)
+    }
+
+    @Test
+    fun play_withoutAFxLibrary_orIntro_appliesAsUsual(): Unit = runBlocking {
+        val f = effectFixture()
+        val calm = f.scene("Calm", null)
+        assertTrue(f.player.play(calm) != null)
     }
 }

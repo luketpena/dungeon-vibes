@@ -18,6 +18,11 @@ import org.junit.Test
 
 class EffectEngineTest {
 
+    private companion object {
+        /** Longer than Flicker spacing, shorter than any gap between flashes in these tests. */
+        const val GAP = 100L
+    }
+
     private val red = LightState(0f, 1f, 0.2f, null)
 
     private fun run(effects: GroupEffects, bulbs: Int = 1, seed: Int = 7, base: LightState = red) =
@@ -216,7 +221,7 @@ class EffectEngineTest {
 
     /* Flashes */
 
-    private fun flashes(pulses: Int = 1, spread: Spread = Spread.TOGETHER) = GroupEffects(
+    private fun flashes(flicker: Boolean = false, spread: Spread = Spread.TOGETHER) = GroupEffects(
         flashes = FlashSettings(
             enabled = true,
             spread = spread,
@@ -227,11 +232,7 @@ class EffectEngineTest {
             releaseMs = 200,
             gapMinMs = 1_000,
             gapMaxMs = 1_000,
-            pulsesMin = pulses,
-            pulsesMax = pulses,
-            spacingMinMs = 100,
-            spacingMaxMs = 100,
-        ),
+        ).withFlicker(flicker),
     )
 
     @Test
@@ -270,6 +271,17 @@ class EffectEngineTest {
     }
 
     @Test
+    fun flashRelease_bringsTheSceneColorBackFasterThanItsBrightness() {
+        // A white flash over a red base (saturation 1, brightness 0.2), with a 1 s release from
+        // 1200 ms. At the release's start it aims 200 ms in: 80 % of the flash left.
+        val slow = flashes().let { it.copy(flashes = it.flashes.copy(releaseMs = 1_000)) }
+        val out = run(slow).at(0, 1_200)
+        assertEquals(0.2f + 0.8f * 0.8f, out.brightness, 0.0001f)
+        // Color: 0.8² = 64 % of the flash left, so the red is already 36 % back (straight: 20 %).
+        assertEquals(0.36f, out.saturation, 0.0001f)
+    }
+
+    @Test
     fun flash_takesPrecedenceOverBrightnessShift() {
         val effects = flashes().copy(
             brightnessShift = BrightnessShiftSettings(enabled = true, levelMin = 0f, levelMax = 0.1f),
@@ -278,39 +290,127 @@ class EffectEngineTest {
     }
 
     @Test
-    fun burst_playsTheSetNumberOfPulses_thenWaitsTheGap() {
-        val run = run(flashes(pulses = 3))
-        var pulses = 0
-        var wasLit = false
-        for (t in 0L..3_000L step 10) {
-            val lit = run.at(0, t).brightness > 0.9f
-            if (lit && !wasLit) pulses++
-            wasLit = lit
+    fun singleOrFlicker_isStoredInThePulseCounts() {
+        val single = FlashSettings()
+        assertTrue(single.flicker.not())
+        val flicker = single.withFlicker(true)
+        assertTrue(flicker.flicker)
+        assertEquals(2, flicker.pulsesMin)
+        assertEquals(3, flicker.pulsesMax)
+        assertEquals(single, flicker.withFlicker(false))
+        // Older rows with any multi-pulse burst read as Flicker.
+        assertTrue(single.copy(pulsesMin = 1, pulsesMax = 5).flicker)
+    }
+
+    /** One pulse of a timeline: when it starts and ends, and how strong it is. */
+    private class Pulse(val start: Long, var end: Long, val strength: Float, val peak: Float)
+
+    /** Every pulse a timeline plays up to [until], stepping 1 ms. */
+    private fun pulsesOf(timeline: FlashTimeline, until: Long): List<Pulse> {
+        val pulses = ArrayList<Pulse>()
+        var current: Pulse? = null
+        for (t in 0L..until) {
+            timeline.advance(t)
+            val lit = timeline.segment(t) != FlashTimeline.IDLE
+            if (lit && current == null) {
+                current = Pulse(t, t, timeline.strength, timeline.peak).also { pulses.add(it) }
+            } else if (!lit && current != null) {
+                current.end = t
+                current = null
+            }
         }
-        // Pulses at 1000, 1500, 2000 (400 ms long, 100 ms apart), then the next burst at 3400.
-        assertEquals(3, pulses)
+        return pulses
+    }
+
+    /** Pulses split into bursts: anything less than [GAP] ms apart is the same burst. */
+    private fun burstsOf(pulses: List<Pulse>): List<List<Pulse>> {
+        val bursts = ArrayList<MutableList<Pulse>>()
+        for (pulse in pulses) {
+            val last = bursts.lastOrNull()
+            if (last != null && pulse.start - last.last().end < GAP) last.add(pulse) else bursts.add(mutableListOf(pulse))
+        }
+        return bursts
     }
 
     @Test
-    fun peakRange_oneFullPulsePerBurst_othersRandomlyDimmer() {
-        val settings = flashes(pulses = 3).flashes.copy(peakMin = 0.3f, peak = 1f)
-        val timeline = FlashTimeline(settings, Random(3))
-        val peaks = ArrayList<Float>()
-        var lastSerial = -1L
-        var t = 0L
-        while (peaks.size < 60) {
-            timeline.advance(t)
-            if (timeline.segment(t) == FlashTimeline.HOLD && timeline.serial != lastSerial) {
-                peaks.add(timeline.peak)
-                lastSerial = timeline.serial
+    fun single_playsOnePulsePerFlash() {
+        val bursts = burstsOf(pulsesOf(FlashTimeline(flashes().flashes, Random(3)), 20_000))
+        assertTrue(bursts.size > 5)
+        assertTrue(bursts.all { it.size == 1 && it[0].strength == 1f })
+    }
+
+    @Test
+    fun flicker_playsTwoOrThreePulses_5To10MsApart_thenWaitsTheGap() {
+        // A full burst is the last one if it ends before the window does.
+        val bursts = burstsOf(pulsesOf(FlashTimeline(flashes(flicker = true).flashes, Random(3)), 60_000)).dropLast(1)
+        assertTrue(bursts.size > 20)
+        for (burst in bursts) {
+            assertTrue("${burst.size}", burst.size in 2..3)
+            for (i in 1 until burst.size) {
+                val spacing = burst[i].start - burst[i - 1].end
+                assertTrue("$spacing", spacing in 5L..10L)
             }
-            t += 5
         }
-        for (burst in peaks.chunked(3)) {
-            assertEquals("$burst", 1, burst.count { it == 1f })
-            assertTrue("$burst", burst.all { it in 0.3f..1f })
+        assertTrue("both sizes should occur", bursts.any { it.size == 2 } && bursts.any { it.size == 3 })
+        // Every pulse snaps on and holds 40 ms; all but the last die away in 60 ms, the last over
+        // the layer's 200 ms Release.
+        for (burst in bursts) {
+            for (i in 0 until burst.size - 1) assertEquals(100L, burst[i].end - burst[i].start)
+            assertEquals(240L, burst.last().end - burst.last().start)
         }
-        assertTrue("dimmer pulses should vary", peaks.filter { it < 1f }.toSet().size > 10)
+        for (i in 1 until bursts.size) assertEquals(1_000L, bursts[i][0].start - bursts[i - 1].last().end)
+    }
+
+    @Test
+    fun flicker_oneFullPulsePerBurst_echoesAtMostAFifthAsStrong() {
+        val settings = flashes(flicker = true).flashes.copy(peakMin = 0.3f, peak = 1f)
+        val bursts = burstsOf(pulsesOf(FlashTimeline(settings, Random(3)), 60_000)).dropLast(1)
+        val echoes = HashSet<Float>()
+        for (burst in bursts) {
+            assertEquals(1, burst.count { it.strength == 1f })
+            // The strike always ends the burst.
+            assertEquals(1f, burst.last().strength)
+            // Every pulse of a burst shares the top of the peak range.
+            assertTrue(burst.all { it.peak == 1f })
+            for (pulse in burst) if (pulse.strength < 1f) {
+                assertTrue("${pulse.strength}", pulse.strength in 0.1f..0.2f)
+                echoes.add(pulse.strength)
+            }
+        }
+        assertTrue("echoes should vary", echoes.size > 10)
+    }
+
+    @Test
+    fun flicker_ignoresAttackAndHold_andSnapsOn() {
+        val slow = flashes(flicker = true).let { it.copy(flashes = it.flashes.copy(attackMs = 2_000, holdMs = 2_000)) }
+        val run = run(slow)
+        val out = Hsbk()
+        // The first pulse starts at 1000: no attack, so it's straight into its hold, sent instantly.
+        run.flashKey(0, 1_000)
+        assertEquals(0, run.sample(0, 1_000, out))
+        assertTrue(out.brightness > 0.2f)
+        // Its hold ends 40 ms later whatever Hold says.
+        run.flashKey(0, 1_041)
+        val transition = run.sample(0, 1_041, out)
+        assertTrue("$transition", transition in 1..200)
+    }
+
+    @Test
+    fun flicker_echoesLiftTheBaseOnlyALittle() {
+        // Base brightness 0.2, peak 1: the main pulse reaches 1, an echo at most 0.2 + 0.8 × 0.2.
+        val run = run(flashes(flicker = true), seed = 4)
+        var strikes = 0
+        var wasLit = false
+        var echoTop = 0f
+        for (t in 0L..2_500L) {
+            val brightness = run.at(0, t).brightness
+            val lit = brightness > 0.9f
+            if (lit && !wasLit) strikes++
+            wasLit = lit
+            if (brightness < 0.9f && brightness > echoTop) echoTop = brightness
+        }
+        assertEquals(1, strikes)
+        assertTrue("$echoTop", echoTop > 0.21f && echoTop <= 0.36f + 0.0001f)
     }
 
     @Test

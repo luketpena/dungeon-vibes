@@ -6,6 +6,7 @@ import com.dungeonvibes.data.db.EffectColorEntity
 import com.dungeonvibes.data.db.FlashSettings
 import com.dungeonvibes.data.db.FxColor
 import com.dungeonvibes.data.db.SceneLightEffectsEntity
+import com.dungeonvibes.data.db.SpinSettings
 
 /** All effect layers of one group in one scene, with the Color shift palette in order. */
 data class GroupEffects(
@@ -13,11 +14,18 @@ data class GroupEffects(
     val palette: List<FxColor> = emptyList(),
     val brightnessShift: BrightnessShiftSettings = BrightnessShiftSettings(),
     val flashes: FlashSettings = FlashSettings(),
+    val spin: SpinSettings = SpinSettings(),
 ) {
     /** Color shift only runs with at least two colors (FX_REQUIREMENTS.md → Edge cases). */
     val runsColorShift: Boolean get() = colorShift.enabled && palette.size >= MIN_PALETTE
 
-    val hasAny: Boolean get() = runsColorShift || brightnessShift.enabled || flashes.enabled
+    val hasAny: Boolean get() = runsColorShift || brightnessShift.enabled || flashes.enabled || spin.enabled
+
+    /**
+     * Whether the group has effects in the ✦ sense: Brightness shift, Flashes or Spin. Multi-color
+     * is a way of coloring the group (owner decision), so it doesn't count, though it animates.
+     */
+    val hasEffectLayers: Boolean get() = brightnessShift.enabled || flashes.enabled || spin.enabled
 
     companion object {
         const val MIN_PALETTE = 2
@@ -26,7 +34,7 @@ data class GroupEffects(
 }
 
 internal fun SceneLightEffectsEntity.toGroupEffects(palette: List<FxColor>): GroupEffects =
-    GroupEffects(colorShift, palette, brightnessShift, flashes)
+    GroupEffects(colorShift, palette, brightnessShift, flashes, spin)
 
 /** Groups the scene's palette rows (already sorted by slot, then position) by slot. */
 internal fun List<EffectColorEntity>.palettesBySlot(): Map<Long, List<FxColor>> {

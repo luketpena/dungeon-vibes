@@ -15,7 +15,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.FilterChip
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -33,25 +32,36 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dungeonvibes.ui.common.snapPercent
 import com.dungeonvibes.R
 import com.dungeonvibes.data.db.FlickerSettings
 import com.dungeonvibes.data.db.FxEntity
 import com.dungeonvibes.data.db.FxPrimitive
 import com.dungeonvibes.data.db.FxTransition
 import com.dungeonvibes.data.db.PulseSettings
+import com.dungeonvibes.data.db.SpinFxSettings
+import com.dungeonvibes.data.db.StrobeSettings
+import com.dungeonvibes.light.fx.PulseShot
+import com.dungeonvibes.light.fx.StrobeShot
+import com.dungeonvibes.ui.common.SettingsCard
+import java.util.Locale
 import com.dungeonvibes.data.db.SceneEntity
 import com.dungeonvibes.data.fx.FxItem
 import com.dungeonvibes.ui.common.FxHaptic
+import com.dungeonvibes.ui.common.LightColors
 import com.dungeonvibes.ui.common.LocalOnLocalNetwork
 import com.dungeonvibes.ui.common.NameKeyboardOptions
 import com.dungeonvibes.ui.common.SteadySlider
 import com.dungeonvibes.ui.common.TopLevelScreen
+import com.dungeonvibes.ui.scenes.editor.AhrControl
 import com.dungeonvibes.ui.scenes.editor.Choice
 import com.dungeonvibes.ui.scenes.editor.ControlLabel
+import com.dungeonvibes.ui.scenes.editor.CountControl
 import com.dungeonvibes.ui.scenes.editor.CountRangeControl
 import com.dungeonvibes.ui.scenes.editor.FxColorControls
 import com.dungeonvibes.ui.scenes.editor.FxRanges
 import com.dungeonvibes.ui.scenes.editor.PercentRangeControl
+import com.dungeonvibes.ui.scenes.editor.SpinDirectionControl
 import com.dungeonvibes.ui.scenes.editor.SpreadControl
 import com.dungeonvibes.ui.scenes.editor.TimeControl
 import com.dungeonvibes.ui.scenes.editor.TimeRangeControl
@@ -115,59 +125,96 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
             return@TopLevelScreen
         }
         val fx = item.fx
-        LazyColumn(modifier = modifier.fillMaxSize(), contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp)) {
+        // Each part of the FX sits in its own box, like the scene editor's groups.
+        LazyColumn(
+            modifier = modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
             item(key = "name") {
-                OutlinedTextField(
-                    value = fx.name,
-                    onValueChange = { name -> viewModel.edit { it.copy(name = name) } },
-                    singleLine = true,
-                    label = { Text(stringResource(R.string.label_name)) },
-                    keyboardOptions = NameKeyboardOptions,
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                )
-            }
-            item(key = "try") {
-                Text(
-                    stringResource(R.string.fx_try_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            item(key = "primitive") {
                 Column {
-                    ControlLabel(stringResource(R.string.fx_primitive))
-                    Choice(
-                        options = listOf(FxPrimitive.PULSE to R.string.fx_pulse, FxPrimitive.FLICKER to R.string.fx_flicker),
-                        selected = fx.primitive,
-                        onSelect = { primitive -> viewModel.edit { it.copy(primitive = primitive) } },
+                    OutlinedTextField(
+                        value = fx.name,
+                        onValueChange = { name -> viewModel.edit { it.copy(name = name) } },
+                        singleLine = true,
+                        label = { Text(stringResource(R.string.label_name)) },
+                        keyboardOptions = NameKeyboardOptions,
+                        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+                    )
+                    Text(
+                        stringResource(R.string.fx_try_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp),
                     )
                 }
             }
-            item(key = "settings") {
-                Column {
+            item(key = "primitive") {
+                Choice(
+                    options = listOf(
+                        FxPrimitive.PULSE to R.string.fx_pulse,
+                        FxPrimitive.FLICKER to R.string.fx_flicker,
+                        FxPrimitive.STROBE to R.string.fx_strobe,
+                        FxPrimitive.SPIN to R.string.fx_spin,
+                    ),
+                    selected = fx.primitive,
+                    onSelect = { primitive -> viewModel.edit { it.copy(primitive = primitive) } },
+                )
+            }
+            // A Flicker has no color of its own: it dims what's there.
+            if (fx.primitive != FxPrimitive.FLICKER) {
+                item(key = "color") {
+                    SettingsCard(stringResource(R.string.settings_color)) {
+                        when (fx.primitive) {
+                            FxPrimitive.PULSE -> PulseColorControls(fx.pulse) { pulse -> viewModel.edit { it.copy(pulse = pulse) } }
+                            FxPrimitive.STROBE -> {
+                                FxColorControls(fx.strobe.color) { color -> viewModel.edit { it.copy(strobe = it.strobe.copy(color = color)) } }
+                                LevelControl(fx.strobe.level) { level -> viewModel.edit { it.copy(strobe = it.strobe.copy(level = level)) } }
+                            }
+                            FxPrimitive.SPIN -> {
+                                FxColorControls(fx.spin.color) { color -> viewModel.edit { it.copy(spin = it.spin.copy(color = color)) } }
+                                LevelControl(fx.spin.level) { level -> viewModel.edit { it.copy(spin = it.spin.copy(level = level)) } }
+                            }
+                            FxPrimitive.FLICKER -> Unit
+                        }
+                    }
+                }
+            }
+            item(key = "timing") {
+                SettingsCard(stringResource(R.string.fx_card_timing)) {
                     when (fx.primitive) {
-                        FxPrimitive.PULSE -> PulseControls(fx.pulse) { pulse -> viewModel.edit { it.copy(pulse = pulse) } }
+                        FxPrimitive.PULSE -> PulseTimingControls(fx.pulse) { pulse -> viewModel.edit { it.copy(pulse = pulse) } }
                         FxPrimitive.FLICKER -> FlickerControls(fx.flicker) { flicker -> viewModel.edit { it.copy(flicker = flicker) } }
+                        FxPrimitive.STROBE -> StrobeTimingControls(fx.strobe) { strobe -> viewModel.edit { it.copy(strobe = strobe) } }
+                        FxPrimitive.SPIN -> SpinTimingControls(fx.spin) { spin -> viewModel.edit { it.copy(spin = spin) } }
                     }
                 }
             }
             item(key = "targets") {
-                Column {
-                    HorizontalDivider(Modifier.padding(top = 12.dp))
+                SettingsCard(stringResource(R.string.fx_targets)) {
                     TargetControls(
                         item = item,
                         groups = state.groups,
                         onAll = viewModel::setTargetAll,
                         onGroup = viewModel::setGroupTargeted,
                     )
-                    SpreadControl(fx.spread, fx.waveOffsetMs) { spread, offset ->
-                        viewModel.edit { it.copy(spread = spread, waveOffsetMs = offset) }
+                    if (fx.primitive == FxPrimitive.SPIN) {
+                        // Spin's order is the bulbs' own; spread doesn't apply to it.
+                        Text(
+                            stringResource(R.string.fx_spin_order_hint),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 8.dp),
+                        )
+                    } else {
+                        SpreadControl(fx.spread, fx.waveOffsetMs) { spread, offset ->
+                            viewModel.edit { it.copy(spread = spread, waveOffsetMs = offset) }
+                        }
                     }
                 }
             }
             item(key = "transition") {
-                Column {
-                    HorizontalDivider(Modifier.padding(top = 12.dp))
+                SettingsCard(stringResource(R.string.fx_card_transition)) {
                     TransitionControls(fx, state.libraryScenes) { change -> viewModel.edit(change) }
                 }
             }
@@ -175,10 +222,10 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
     }
 }
 
+/** Pulse: its color and which parts of the light it moves. */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PulseControls(pulse: PulseSettings, onChange: (PulseSettings) -> Unit) {
-    ControlLabel(stringResource(R.string.fx_pulse_color))
+private fun PulseColorControls(pulse: PulseSettings, onChange: (PulseSettings) -> Unit) {
     FxColorControls(pulse.color) { onChange(pulse.copy(color = it)) }
     ControlLabel(stringResource(R.string.fx_channels))
     // At least one channel stays on, or the pulse would do nothing.
@@ -200,10 +247,23 @@ private fun PulseControls(pulse: PulseSettings, onChange: (PulseSettings) -> Uni
             label = { Text(stringResource(R.string.fx_channel_brightness)) },
         )
     }
+}
+
+/** Pulse: its peak, envelope and burst. */
+@Composable
+private fun PulseTimingControls(pulse: PulseSettings, onChange: (PulseSettings) -> Unit) {
     PercentRangeControl(R.string.fx_peak, pulse.peakMin, pulse.peak) { lo, hi -> onChange(pulse.copy(peakMin = lo, peak = hi)) }
-    TimeControl(R.string.fx_attack, pulse.attackMs, 0, FxRanges.ENVELOPE_MAX) { onChange(pulse.copy(attackMs = it)) }
-    TimeControl(R.string.fx_hold, pulse.holdMs, 0, FxRanges.ENVELOPE_MAX) { onChange(pulse.copy(holdMs = it)) }
-    TimeControl(R.string.fx_release, pulse.releaseMs, 0, FxRanges.ENVELOPE_MAX) { onChange(pulse.copy(releaseMs = it)) }
+    AhrControl(
+        attackMs = pulse.attackMs,
+        holdMs = pulse.holdMs,
+        releaseMs = pulse.releaseMs,
+        maxMs = FxRanges.ENVELOPE_MAX,
+        // A brightness-only pulse has no color of its own: the theme's.
+        color = if (pulse.affectsColor || pulse.affectsSaturation) LightColors.displayColor(pulse.color) else null,
+        // Drawn with the curved release the pulse actually plays.
+        releaseCurve = PulseShot.RELEASE_CURVE,
+        onChange = { a, h, r -> onChange(pulse.copy(attackMs = a, holdMs = h, releaseMs = r)) },
+    )
     CountRangeControl(R.string.fx_pulses, pulse.pulsesMin, pulse.pulsesMax, 1, FxRanges.MAX_PULSES) { lo, hi ->
         onChange(pulse.copy(pulsesMin = lo, pulsesMax = hi))
     }
@@ -222,7 +282,7 @@ private fun FlickerControls(flicker: FlickerSettings, onChange: (FlickerSettings
     ControlLabel(stringResource(R.string.fx_depth, (flicker.depth * 100).roundToInt()))
     SteadySlider(
         value = flicker.depth,
-        onValueChange = { onChange(flicker.copy(depth = (it * 100f).roundToInt() / 100f)) },
+        onValueChange = { onChange(flicker.copy(depth = snapPercent(it))) },
     )
     TimeRangeControl(
         R.string.fx_change_every,
@@ -233,6 +293,45 @@ private fun FlickerControls(flicker: FlickerSettings, onChange: (FlickerSettings
     ) { lo, hi -> onChange(flicker.copy(intervalMinMs = lo, intervalMaxMs = hi)) }
 }
 
+/** Strobe: how fast (half-flash steps, up to 4 a second) and for how long. */
+@Composable
+private fun StrobeTimingControls(strobe: StrobeSettings, onChange: (StrobeSettings) -> Unit) {
+    val rate = strobe.flashesPerSecond.coerceIn(StrobeShot.MIN_FLASHES_PER_SECOND, StrobeShot.MAX_FLASHES_PER_SECOND)
+    ControlLabel(stringResource(R.string.fx_strobe_rate, String.format(Locale.getDefault(), "%.1f", rate)))
+    SteadySlider(
+        value = rate,
+        onValueChange = { onChange(strobe.copy(flashesPerSecond = (it * 2f).roundToInt() / 2f)) },
+        valueRange = StrobeShot.MIN_FLASHES_PER_SECOND..StrobeShot.MAX_FLASHES_PER_SECOND,
+        steps = ((StrobeShot.MAX_FLASHES_PER_SECOND - StrobeShot.MIN_FLASHES_PER_SECOND) * 2f).roundToInt() - 1,
+    )
+    TimeControl(R.string.fx_duration, strobe.durationMs, FxEditorRanges.DURATION_MIN, FxEditorRanges.DURATION_MAX) {
+        onChange(strobe.copy(durationMs = it))
+    }
+}
+
+/** Spin: time from bulb to bulb, laps, and each bulb's envelope. */
+@Composable
+private fun SpinTimingControls(spin: SpinFxSettings, onChange: (SpinFxSettings) -> Unit) {
+    TimeControl(R.string.fx_spin_step, spin.stepMs, FxRanges.SPIN_STEP_MIN, FxRanges.SPIN_STEP_MAX) { onChange(spin.copy(stepMs = it)) }
+    CountControl(R.string.fx_spin_laps, spin.laps, 1, FxRanges.MAX_LAPS) { onChange(spin.copy(laps = it)) }
+    SpinDirectionControl(spin.reverse) { onChange(spin.copy(reverse = it)) }
+    AhrControl(
+        attackMs = spin.attackMs,
+        holdMs = spin.holdMs,
+        releaseMs = spin.releaseMs,
+        maxMs = FxRanges.ENVELOPE_MAX,
+        color = LightColors.displayColor(spin.color),
+        onChange = { a, h, r -> onChange(spin.copy(attackMs = a, holdMs = h, releaseMs = r)) },
+    )
+}
+
+/** A brightness level (0–100 % in 5 % steps). */
+@Composable
+internal fun LevelControl(level: Float, onChange: (Float) -> Unit) {
+    ControlLabel(stringResource(R.string.fx_level, (level * 100).roundToInt()))
+    SteadySlider(value = level, onValueChange = { onChange(snapPercent(it)) })
+}
+
 @Composable
 private fun TargetControls(
     item: FxItem,
@@ -240,7 +339,6 @@ private fun TargetControls(
     onAll: (Boolean) -> Unit,
     onGroup: (Long, Boolean) -> Unit,
 ) {
-    ControlLabel(stringResource(R.string.fx_targets))
     Choice(
         options = listOf(true to R.string.fx_targets_all, false to R.string.fx_targets_groups),
         selected = item.fx.targetAll,
@@ -268,7 +366,6 @@ private fun TargetControls(
 
 @Composable
 private fun TransitionControls(fx: FxEntity, library: List<SceneEntity>, onChange: ((FxEntity) -> FxEntity) -> Unit) {
-    ControlLabel(stringResource(R.string.fx_transition))
     Choice(
         options = listOf(
             FxTransition.RETURN to R.string.fx_transition_return,

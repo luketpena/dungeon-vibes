@@ -21,24 +21,48 @@ data class BulbEntity(
 )
 
 /**
- * A named role like "Ceiling". Scenes point at slots, never at bulbs.
+ * A named role like "Ceiling". Scenes point at slots, never at bulbs. A bulb can be in several
+ * groups; where two lit groups share one, the group higher in the list ([sortOrder]) wins it.
  *
  * One hidden slot has [isRoom] set: it holds each scene's "All lights" settings (color, effects),
  * which every bulb shares while the scene's All lights is on. It never has bulbs and never shows in
  * Setup; storing it as a slot lets copy, reset, promote and effects treat it like any group.
+ *
+ * Hidden slots with a [bulbId] hold a scene's settings for that one bulb ("individual lights",
+ * database version 9): they win over All lights and every group. One per bulb, created on first
+ * use, never shown in Setup, deleted with the bulb. Like the room slot, they let scenes, copies
+ * and effects treat an individual light like any group.
  */
-@Entity(tableName = "light_slots")
+@Entity(
+    tableName = "light_slots",
+    foreignKeys = [
+        ForeignKey(
+            entity = BulbEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["bulbId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index("bulbId")],
+)
 data class LightSlotEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
     val name: String,
     val sortOrder: Int,
     @ColumnInfo(defaultValue = "0") val isRoom: Boolean = false,
-)
+    val bulbId: Long? = null,
+) {
+    /** A user's group (not the All-lights slot or an individual light's). */
+    val isGroup: Boolean get() = !isRoom && bulbId == null
+}
 
-/** Bulb-to-slot assignment. [bulbId] is the primary key, so a bulb is in at most one slot. */
+/**
+ * Bulb-to-slot assignment. A bulb can be in several slots (database version 9), once in each.
+ * [position] orders a group's bulbs (database version 10): Wave and Spin follow it.
+ */
 @Entity(
     tableName = "slot_bulbs",
-    primaryKeys = ["bulbId"],
+    primaryKeys = ["slotId", "bulbId"],
     foreignKeys = [
         ForeignKey(
             entity = LightSlotEntity::class,
@@ -53,11 +77,12 @@ data class LightSlotEntity(
             onDelete = ForeignKey.CASCADE,
         ),
     ],
-    indices = [Index("slotId")],
+    indices = [Index("slotId"), Index("bulbId")],
 )
 data class SlotBulbEntity(
     val slotId: Long,
     val bulbId: Long,
+    @ColumnInfo(defaultValue = "0") val position: Int = 0,
 )
 
 @Entity(tableName = "adventures")
@@ -88,8 +113,14 @@ data class AdventureEntity(
             childColumns = ["parentSceneId"],
             onDelete = ForeignKey.SET_NULL,
         ),
+        ForeignKey(
+            entity = FxEntity::class,
+            parentColumns = ["id"],
+            childColumns = ["introFxId"],
+            onDelete = ForeignKey.SET_NULL,
+        ),
     ],
-    indices = [Index("adventureId"), Index("parentSceneId")],
+    indices = [Index("adventureId"), Index("parentSceneId"), Index("introFxId")],
 )
 data class SceneEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -110,6 +141,12 @@ data class SceneEntity(
      * the lights menu. Never listed in the library (owner request; database version 8).
      */
     @ColumnInfo(defaultValue = "0") val isDefault: Boolean = false,
+    /**
+     * The FX the scene opens with (FX_REQUIREMENTS.md → Intro FX; database version 12): played
+     * from whatever the bulbs show, landing in the scene as its release starts. Deleting the FX
+     * clears it.
+     */
+    val introFxId: Long? = null,
 ) {
     val isLibraryScene: Boolean get() = adventureId == null && !isDefault
 

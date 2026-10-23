@@ -31,6 +31,14 @@ class LightMirror @Inject constructor() {
         flowFor(key).value = CommandedLight(color, fadeMs)
     }
 
+    /**
+     * What a bulb reported about itself (discovery), recorded only if the app hasn't sent it
+     * anything yet, so the glow starts from the truth after a restart. [color] null: it's off.
+     */
+    fun seed(key: String, color: LightState?) {
+        flowFor(key).compareAndSet(null, CommandedLight(color, 0))
+    }
+
     private fun flowFor(key: String): MutableStateFlow<CommandedLight?> =
         bulbs[key] ?: bulbs.computeIfAbsent(key) { MutableStateFlow(null) }
 

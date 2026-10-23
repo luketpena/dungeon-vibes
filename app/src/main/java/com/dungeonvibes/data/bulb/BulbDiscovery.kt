@@ -1,5 +1,6 @@
 package com.dungeonvibes.data.bulb
 
+import com.dungeonvibes.light.BulbReachability
 import com.dungeonvibes.light.LightController
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -23,6 +24,8 @@ class BulbDiscovery @Inject constructor(
     private val lightController: LightController,
     private val bulbs: BulbRepository,
     private val lock: DiscoveryLock,
+    /** Told which bulbs answered each scan (the default serves tests). */
+    private val reachability: BulbReachability = BulbReachability(),
 ) {
     private val scanMutex = Mutex()
 
@@ -30,6 +33,11 @@ class BulbDiscovery @Inject constructor(
 
     /** Ids of bulbs that answered the most recent scan. */
     val onlineBulbIds: StateFlow<Set<Long>> = _onlineBulbIds.asStateFlow()
+
+    /** Power each bulb reported in the most recent scan (bulbs that didn't say are left out). */
+    @Volatile
+    var reportedPower: Map<Long, Boolean> = emptyMap()
+        private set
 
     private val _isScanning = MutableStateFlow(false)
     val isScanning: StateFlow<Boolean> = _isScanning.asStateFlow()
@@ -41,13 +49,17 @@ class BulbDiscovery @Inject constructor(
             _isScanning.value = true
             lock.acquire()
             val found = HashSet<Long>()
+            val power = HashMap<Long, Boolean>()
             lightController.discover(timeoutMs).collect { bulb ->
                 val address = bulb.address
                 val id = bulbs.recordSeen(address.protocolId, address.serial, address.ip, bulb.label)
+                bulb.isOn?.let { power[id] = it }
                 // Show bulbs as online as soon as they answer, not only when the scan ends.
                 if (found.add(id)) _onlineBulbIds.value = _onlineBulbIds.value + id
             }
             _onlineBulbIds.value = found
+            reportedPower = power
+            reachability.onScan(found)
         } finally {
             lock.release()
             _isScanning.value = false

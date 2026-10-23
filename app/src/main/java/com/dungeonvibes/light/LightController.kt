@@ -38,6 +38,8 @@ class LightController @Inject constructor(
     @ApplicationScope private val scope: CoroutineScope,
     /** Every command is recorded here for the screen to follow (the default serves tests). */
     private val mirror: LightMirror = LightMirror(),
+    /** Scales the brightness of everything sent (the lights menu's master dimmer). */
+    private val dimmer: MasterDimmer = MasterDimmer(),
 ) {
     private val adapterList: List<LightAdapter> = adapters.toList()
     private val adaptersById: Map<String, LightAdapter> = adapters.associateBy { it.protocolId }
@@ -51,6 +53,32 @@ class LightController @Inject constructor(
     /** One conflated channel and sender coroutine per bulb being previewed. */
     private val previewChannels = ConcurrentHashMap<String, Channel<LightState>>()
 
+    /** What each lit bulb was last asked to show, before the dimmer, so a dimmer change can resend it. */
+    private val lastLook = ConcurrentHashMap<String, Pair<BulbAddress, LightState>>()
+
+    /** [state] with the master dimmer applied; remembered (undimmed) as the bulb's look. */
+    private fun dimmed(address: BulbAddress, key: String, state: LightState): LightState {
+        lastLook[key] = address to state
+        val level = dimmer.level.value
+        return if (level >= MasterDimmer.FULL) state else state.copy(brightness = state.brightness * level)
+    }
+
+    /**
+     * Sets the master dimmer and moves every lit bulb to its look at the new level over
+     * [DIMMER_FADE_MS]. Running effects pick it up with their next frame anyway.
+     */
+    fun setDimmer(level: Float) {
+        if (!dimmer.set(level)) return
+        for ((key, look) in lastLook) {
+            if (knownPower[key] != true) continue
+            val (address, state) = look
+            val adapter = adapterFor(address) ?: continue
+            val sent = dimmed(address, key, state)
+            mirror.record(key, sent, DIMMER_FADE_MS)
+            scope.launch { adapter.setState(address, sent, DIMMER_FADE_MS, reliable = false) }
+        }
+    }
+
     /* Discovery */
 
     /** Scans every available adapter at once; completes after [timeoutMs]. */
@@ -59,7 +87,14 @@ class LightController @Inject constructor(
         if (available.isEmpty()) return emptyFlow()
         return available.map { it.discover(timeoutMs) }.merge().onEach { bulb ->
             val on = bulb.isOn ?: return@onEach
-            knownPower[keyOf(bulb.address)] = on
+            val key = keyOf(bulb.address)
+            knownPower[key] = on
+            // The glow follows what bulbs report until the app sends them something itself.
+            if (!on) {
+                mirror.seed(key, null)
+            } else {
+                bulb.state?.let { mirror.seed(key, it) }
+            }
         }
     }
 
@@ -116,9 +151,10 @@ class LightController @Inject constructor(
      * Turns a bulb on to [state] with a [fadeMs] fade. A bulb that may be off first gets its color
      * set instantly, then fades its power up, so it never flashes its old color.
      */
-    suspend fun turnOn(address: BulbAddress, state: LightState, fadeMs: Int): Result<Unit> {
+    suspend fun turnOn(address: BulbAddress, requested: LightState, fadeMs: Int): Result<Unit> {
         val adapter = adapterFor(address) ?: return unavailable(address)
         val key = keyOf(address)
+        val state = dimmed(address, key, requested)
         mirror.record(key, state, fadeMs)
         if (knownPower[key] == true) {
             return adapter.setState(address, state, fadeMs, reliable = true)
@@ -142,6 +178,7 @@ class LightController @Inject constructor(
         val adapter = adapterFor(address) ?: return unavailable(address)
         val key = keyOf(address)
         mirror.record(key, null, fadeMs)
+        lastLook.remove(key)
         val result = adapter.setPower(address, false, fadeMs, reliable = true)
         if (result.isSuccess) knownPower[key] = false
         return result
@@ -177,11 +214,13 @@ class LightController @Inject constructor(
         return channel
     }
 
-    private suspend fun sendPreview(address: BulbAddress, state: LightState) {
+    private suspend fun sendPreview(address: BulbAddress, requested: LightState) {
         val adapter = adapterFor(address) ?: return
         val key = keyOf(address)
-        mirror.record(key, if (state === PREVIEW_OFF) null else state, PREVIEW_FADE_MS)
-        if (state === PREVIEW_OFF) {
+        if (requested === PREVIEW_OFF) lastLook.remove(key)
+        val state = if (requested === PREVIEW_OFF) requested else dimmed(address, key, requested)
+        mirror.record(key, if (requested === PREVIEW_OFF) null else state, PREVIEW_FADE_MS)
+        if (requested === PREVIEW_OFF) {
             if (adapter.setPower(address, false, PREVIEW_FADE_MS, reliable = false).isSuccess) {
                 knownPower[key] = false
             }
@@ -203,9 +242,11 @@ class LightController @Inject constructor(
      * One effect frame, faded over [transitionMs]. Assumes the bulb is on: EffectRunner turns its
      * bulbs on (reliably) before animating. Failures are ignored; the next frame tries again.
      */
-    suspend fun sendEffectFrame(address: BulbAddress, state: LightState, transitionMs: Int) {
+    suspend fun sendEffectFrame(address: BulbAddress, requested: LightState, transitionMs: Int) {
         val adapter = adapterFor(address) ?: return
-        mirror.record(keyOf(address), state, transitionMs)
+        val key = keyOf(address)
+        val state = dimmed(address, key, requested)
+        mirror.record(key, state, transitionMs)
         adapter.setState(address, state, transitionMs, reliable = false)
     }
 
@@ -223,6 +264,9 @@ class LightController @Inject constructor(
 
     companion object {
         const val PREVIEW_FADE_MS = 100
+
+        /** How quickly bulbs follow the master dimmer. */
+        const val DIMMER_FADE_MS = 300
         const val PREVIEW_INTERVAL_MS = 100L
 
         /** Sentinel meaning "off" in the preview channel, compared by identity. */

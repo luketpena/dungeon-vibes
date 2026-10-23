@@ -86,11 +86,11 @@ class FxShotsTest {
     @Test
     fun pulseRelease_isCurved_stayingNearThePeakLonger() {
         val shot = PulseShot(pulse, Random(1))
-        // At the release's start (300) it aims 200 ms in, halfway through: 75 % of the way up
+        // At the release's start (300) it aims 200 ms in, halfway through: 62.5 % of the way up
         // rather than the 50 % of a straight fade.
         val out = base()
         shot.apply(300, out)
-        assertEquals(0.2f + 0.8f * 0.75f, out.brightness, 0.001f)
+        assertEquals(0.2f + 0.8f * 0.625f, out.brightness, 0.001f)
     }
 
     @Test

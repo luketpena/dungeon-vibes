@@ -4,18 +4,14 @@ import android.provider.Settings
 import androidx.compose.animation.Animatable
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.AnimationVector1D
-import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -35,7 +31,9 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.State
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.withFrameNanos
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -69,6 +67,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
+import kotlin.math.PI
+import kotlin.math.cos
 
 /*
  * The active tile's glow: a colored light around the card that follows what the bulbs are being
@@ -89,16 +89,23 @@ data class GlowSource(val bulbKey: String?, val fallback: Color)
 internal fun glowSources(swatches: List<SceneSwatch>, allLightsOn: Boolean, bulbs: GlowBulbs): List<GlowSource> {
     val count = swatches.size
     if (count == 0) return emptyList()
-    val result = ArrayList<GlowSource>(if (allLightsOn) bulbs.all.size.coerceAtLeast(1) else count)
+    val result = ArrayList<GlowSource>(maxOf(count, bulbs.all.size))
+    // Swatches come in precedence order, and a bulb in several of them glows only under the
+    // first (the one that wins it).
+    val used = HashSet<String>()
     for (i in 0 until count) {
         val swatch = swatches[i]
-        val keys = if (allLightsOn) bulbs.all else bulbs.bySlot[swatch.slotId]
+        // The All-lights swatch has no bulbs of its own: it covers every bulb not set individually.
+        val keys = bulbs.bySlot[swatch.slotId] ?: if (allLightsOn) bulbs.all else null
         if (keys.isNullOrEmpty()) {
             result.add(GlowSource(null, swatch.color))
             continue
         }
         val keyCount = keys.size
-        for (k in 0 until keyCount) result.add(GlowSource(keys[k], swatch.color))
+        for (k in 0 until keyCount) {
+            val key = keys[k]
+            if (used.add(key)) result.add(GlowSource(key, swatch.color))
+        }
     }
     return result
 }
@@ -114,31 +121,61 @@ internal fun glowColorOf(state: LightState): Color {
 internal fun glowLevelOf(brightness: Float): Float =
     if (brightness <= DARK_BRIGHTNESS) 0f else 0.35f + 0.65f * brightness.coerceAtMost(1f)
 
+/**
+ * The level a stretch heads for: [brightness]'s level, except that fast rises (flashes, strobes)
+ * flare only part of the way above [current]. Not when [initial] (the first command seen since the
+ * glow appeared): the glow starts at 0 then, and a short last fade, such as the tail of a flash,
+ * would otherwise leave a lit bulb's stretch stuck dim until the next flash.
+ */
+internal fun glowTargetLevel(brightness: Float, fadeMs: Int, current: Float, initial: Boolean): Float {
+    val level = glowLevelOf(brightness)
+    if (initial || fadeMs >= FLASH_FADE_MS) return level
+    return level.coerceAtMost(current + FLASH_MAX_RISE)
+}
+
 /** One stretch's animated color and level (0–1); read only while drawing, so animating never recomposes. */
 @Stable
 class GlowSegment internal constructor(fallback: Color) {
     internal val color = Animatable(fallback)
     internal val level = Animatable(0f)
 
-    /** Moves toward what was last sent, over its fade, the way the bulb does. */
-    internal suspend fun follow(sent: CommandedLight?, fallback: Color): Unit = coroutineScope {
+    /**
+     * Moves toward what was last sent, over its fade, the way the bulb does. [initial]: the first
+     * command seen since the glow appeared (a screen opened mid-scene), which is where the bulb
+     * already is, not a change happening now.
+     */
+    internal suspend fun follow(sent: CommandedLight?, fallback: Color, initial: Boolean = false): Unit = coroutineScope {
         if (sent == null) {
             // Nothing sent to this bulb yet: rest on the scene's swatch color.
+            if (initial) {
+                color.snapTo(fallback)
+                level.snapTo(STATIC_LEVEL)
+                return@coroutineScope
+            }
             launch { color.animateTo(fallback, tween(GLOW_IN_MS)) }
             level.animateTo(STATIC_LEVEL, tween(GLOW_IN_MS))
             return@coroutineScope
         }
+        val target = sent.color
+        if (initial) {
+            // Coming in fresh (a screen opened, a tab switched): the bulb is already there, so the
+            // glow starts there too instead of fading up from nothing every time.
+            if (target == null) {
+                level.snapTo(0f)
+            } else {
+                color.snapTo(glowColorOf(target))
+                level.snapTo(glowTargetLevel(target.brightness, sent.fadeMs, level.value, initial = true))
+            }
+            return@coroutineScope
+        }
         // Instant changes (flash edges) get a short ramp, so the screen never strobes.
         val ms = sent.fadeMs.coerceAtLeast(MIN_GLOW_FADE_MS)
-        val target = sent.color
         if (target == null) {
             // Turned off: the light fades out; its color stays where it was.
             level.animateTo(0f, tween(ms, easing = LinearEasing))
             return@coroutineScope
         }
-        var targetLevel = glowLevelOf(target.brightness)
-        // Fast rises (flashes, strobes) flare only part of the way.
-        if (sent.fadeMs < FLASH_FADE_MS) targetLevel = targetLevel.coerceAtMost(level.value + FLASH_MAX_RISE)
+        val targetLevel = glowTargetLevel(target.brightness, sent.fadeMs, level.value, initial = false)
         launch { color.animateTo(glowColorOf(target), tween(ms, easing = LinearEasing)) }
         level.animateTo(targetLevel, tween(ms, easing = LinearEasing))
     }
@@ -173,7 +210,14 @@ private fun rememberSceneGlow(
                 continue
             }
             // collectLatest: a new command cancels the fade in progress, which carries on from where it is.
-            launch { currentObserve(key).collectLatest { segment.follow(it, source.fallback) } }
+            launch {
+                var initial = true
+                currentObserve(key).collectLatest {
+                    val first = initial
+                    initial = false
+                    segment.follow(it, source.fallback, first)
+                }
+            }
         }
     }
     return state
@@ -182,12 +226,17 @@ private fun rememberSceneGlow(
 /** A slow 4 s breath (0–1) for scenes whose lights hold still, so the active card never looks dead. */
 @Composable
 private fun rememberBreath(): State<Float> =
-    rememberInfiniteTransition(label = "glowBreath").animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(tween(BREATH_MS / 2, easing = FastOutSlowInEasing), RepeatMode.Reverse),
-        label = "breath",
-    )
+    // Read from the frame clock, not started per glow: every glow on screen breathes in step, and
+    // one that appears (a tab switch) joins mid-breath instead of starting over.
+    produceState(breathAt(System.nanoTime())) {
+        while (true) withFrameNanos { value = breathAt(it) }
+    }
+
+/** Where a breath is (0 resting, 1 deepest) at [nanos] on the frame clock: a smooth 0 → 1 → 0. */
+private fun breathAt(nanos: Long): Float {
+    val phase = ((nanos / 1_000_000L) % BREATH_MS).toFloat() / BREATH_MS
+    return (1f - cos(2.0 * PI * phase).toFloat()) / 2f
+}
 
 /** False when the system's "Remove animations" (animator duration scale 0) is on. */
 @Composable
@@ -244,6 +293,46 @@ fun rememberRoomGlowModifier(
     val breath = if (animate && !effectsRunning) rememberBreath() else null
     return Modifier.sceneGlow(glow, shape, breath).glowOutline(glow, shape, breath, dashed = false)
 }
+
+/**
+ * A soft round halo in the room's colors, with no outline: the title bar's bulb. Put it on a small
+ * box behind the bulb's glass; it follows every bulb in [bulbs] like the nav edge and adventure
+ * cards, and breathes while no effects run.
+ */
+@Composable
+fun rememberRoomHaloModifier(
+    active: Boolean,
+    bulbs: List<String>,
+    effectsRunning: Boolean,
+    observe: (String) -> StateFlow<CommandedLight?>,
+): Modifier {
+    if (!active || bulbs.isEmpty()) return Modifier
+    val animate = rememberAnimationsEnabled()
+    val sources = remember(bulbs) { bulbs.map { GlowSource(it, Color.Transparent) } }
+    val glow = rememberSceneGlow(sources, live = true, observe)
+    val breath = if (animate && !effectsRunning) rememberBreath() else null
+    return Modifier.haloGlow(glow, breath)
+}
+
+/**
+ * The halo's own glow: tighter and stronger than a card's, since it surrounds a small disk rather
+ * than a large card (the card's wide blur spreads it too thin to see).
+ */
+private fun Modifier.haloGlow(glow: SceneGlowState, breath: State<Float>?): Modifier =
+    dropShadow(CircleShape) {
+        val pulse = breath?.value ?: 0f
+        radius = (HALO_BLUR + GLOW_RADIUS_BREATH * 0.5f * pulse).toPx()
+        spread = HALO_SPREAD.toPx()
+        alpha = 1f
+        val segments = glow.segments
+        val alphaScale = HALO_MAX_ALPHA * (1f - BREATH_DEPTH * pulse)
+        if (segments.size == 1) {
+            brush = null
+            color = segments[0].glowColor(alphaScale)
+            return@dropShadow
+        }
+        brush = sweepOf(segments, alphaScale)
+    }
 
 /* The card */
 
@@ -471,6 +560,10 @@ fun Modifier.pressScale(scale: Animatable<Float, AnimationVector1D>): Modifier =
 }
 
 /* Tuning */
+
+private val HALO_BLUR = 9.dp
+private val HALO_SPREAD = 4.dp
+private const val HALO_MAX_ALPHA = 1f
 
 /** How far the edge's light reaches into the screen: about 2.5× a card's glow. */
 private val EDGE_DEPTH = 36.dp

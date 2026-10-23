@@ -11,14 +11,18 @@ import com.dungeonvibes.light.CommandedLight
 import com.dungeonvibes.light.LightMirror
 import com.dungeonvibes.light.ScenePlayer
 import com.dungeonvibes.ui.adventures.play.buildGlowBulbs
+import com.dungeonvibes.ui.common.DeletedItem
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -30,7 +34,7 @@ data class AdventuresUiState(
 @HiltViewModel
 class AdventuresViewModel @Inject constructor(
     private val adventures: AdventureRepository,
-    scenes: SceneRepository,
+    private val scenes: SceneRepository,
     player: ScenePlayer,
     slots: LightSlotRepository,
     bulbs: BulbRepository,
@@ -73,9 +77,22 @@ class AdventuresViewModel @Inject constructor(
         viewModelScope.launch { adventures.rename(adventureId, name) }
     }
 
-    /** Deletes the adventure and its scenes; library scenes are untouched. */
+    private val _deletions = Channel<DeletedItem>(Channel.BUFFERED)
+
+    /** Each delete, for the Undo snackbar. */
+    val deletions: Flow<DeletedItem> = _deletions.receiveAsFlow()
+
+    /** Deletes the adventure and its scenes; library scenes are untouched. Undo brings it all back. */
     fun delete(adventureId: Long) {
-        viewModelScope.launch { adventures.delete(adventureId) }
+        viewModelScope.launch {
+            val deleted = scenes.deleteAdventure(adventureId) ?: return@launch
+            _deletions.send(DeletedItem(deleted.adventure.name) { viewModelScope.launch { scenes.restoreAdventure(deleted) } })
+        }
+    }
+
+    /** Copies the adventure (scenes and FX favorites) right after itself. */
+    fun duplicate(adventureId: Long) {
+        viewModelScope.launch { scenes.duplicateAdventure(adventureId) }
     }
 
     fun reorder(orderedAdventureIds: List<Long>) {

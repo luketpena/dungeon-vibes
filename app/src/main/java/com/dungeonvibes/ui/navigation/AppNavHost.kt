@@ -1,5 +1,6 @@
 package com.dungeonvibes.ui.navigation
 
+import com.dungeonvibes.ui.setup.bulbs.BulbDetailScreen
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.NavHost
@@ -12,6 +13,7 @@ import com.dungeonvibes.ui.debug.DebugScreen
 import com.dungeonvibes.ui.scenes.ScenesScreen
 import com.dungeonvibes.ui.scenes.editor.SceneEditor
 import com.dungeonvibes.ui.setup.SetupScreen
+import com.dungeonvibes.ui.setup.slots.GroupDetailScreen
 
 private const val ROUTE_DEBUG = "debug"
 private const val ARG_SCENE_ID = "sceneId"
@@ -23,6 +25,18 @@ private fun adventureSceneRoute(sceneId: Long) = "adventures/scene/$sceneId"
 private const val ROUTE_SETUP_SCENE = "setup/scene/{$ARG_SCENE_ID}"
 
 private fun setupSceneRoute(sceneId: Long) = "setup/scene/$sceneId"
+
+/** A bulb's page, full screen, under the Setup tab. */
+private const val ARG_BULB_ID = "bulbId"
+private const val ROUTE_SETUP_BULB = "setup/bulb/{$ARG_BULB_ID}"
+
+private fun setupBulbRoute(bulbId: Long) = "setup/bulb/$bulbId"
+
+/** A group's page, full screen, under the Setup tab. */
+private const val ARG_GROUP_ID = "groupId"
+private const val ROUTE_SETUP_GROUP = "setup/group/{$ARG_GROUP_ID}"
+
+private fun setupGroupRoute(groupId: Long) = "setup/group/$groupId"
 
 @Composable
 fun AppNavHost(
@@ -50,7 +64,23 @@ fun AppNavHost(
                     null
                 },
                 onOpenSceneEditor = { sceneId -> navController.navigate(setupSceneRoute(sceneId)) },
+                onOpenBulb = { bulbId -> navController.navigate(setupBulbRoute(bulbId)) },
+                onOpenGroup = { groupId -> navController.navigate(setupGroupRoute(groupId)) },
             )
+        }
+        composable(
+            route = ROUTE_SETUP_GROUP,
+            arguments = listOf(navArgument(ARG_GROUP_ID) { type = NavType.LongType }),
+        ) { entry ->
+            val groupId = entry.arguments?.getLong(ARG_GROUP_ID) ?: return@composable
+            GroupDetailScreen(slotId = groupId, onBack = { navController.popBackStack() })
+        }
+        composable(
+            route = ROUTE_SETUP_BULB,
+            arguments = listOf(navArgument(ARG_BULB_ID) { type = NavType.LongType }),
+        ) { entry ->
+            val bulbId = entry.arguments?.getLong(ARG_BULB_ID) ?: return@composable
+            BulbDetailScreen(bulbId = bulbId, onBack = { navController.popBackStack() })
         }
         composable(
             route = ROUTE_SETUP_SCENE,

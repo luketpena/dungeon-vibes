@@ -46,4 +46,15 @@ class SceneGlowTest {
         assertEquals(0.35f + 0.65f * 0.01f, glowLevelOf(0.01f), 0.0001f)
         assertEquals(1f, glowLevelOf(1f), 0.0001f)
     }
+
+    @Test
+    fun aFlashRise_flaresOnlyPartWay_butOpeningTheScreenShowsTheBulbAsItIs() {
+        // Mid-scene, a fast rise from dark is capped.
+        assertEquals(0.35f, glowTargetLevel(1f, fadeMs = 50, current = 0f, initial = false), 0.0001f)
+        // Opening the screen: the last command (the tail of a flash, short fade) is where the bulb
+        // already is, so the glow goes all the way there (owner bug: warm white stayed dim).
+        assertEquals(glowLevelOf(0.8f), glowTargetLevel(0.8f, fadeMs = 50, current = 0f, initial = true), 0.0001f)
+        // Ordinary fades are never capped.
+        assertEquals(glowLevelOf(0.8f), glowTargetLevel(0.8f, fadeMs = 300, current = 0f, initial = false), 0.0001f)
+    }
 }

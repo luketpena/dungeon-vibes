@@ -27,9 +27,16 @@ private const val TAB_DEFAULT = 2
 /**
  * @param onOpenDebug null hides the debug button (release builds).
  * @param onOpenSceneEditor opens the default-lighting scene in the scene editor.
+ * @param onOpenBulb opens a bulb's page.
+ * @param onOpenGroup opens a group's page.
  */
 @Composable
-fun SetupScreen(onOpenDebug: (() -> Unit)?, onOpenSceneEditor: (Long) -> Unit) {
+fun SetupScreen(
+    onOpenDebug: (() -> Unit)?,
+    onOpenSceneEditor: (Long) -> Unit,
+    onOpenBulb: (Long) -> Unit,
+    onOpenGroup: (Long) -> Unit,
+) {
     // rememberSaveable survives rotation, unlike plain remember.
     var selectedTab by rememberSaveable { mutableIntStateOf(TAB_BULBS) }
 
@@ -65,8 +72,8 @@ fun SetupScreen(onOpenDebug: (() -> Unit)?, onOpenSceneEditor: (Long) -> Unit) {
                 )
             }
             when (selectedTab) {
-                TAB_BULBS -> BulbsTab(modifier = Modifier.weight(1f))
-                TAB_SLOTS -> SlotsTab(modifier = Modifier.weight(1f))
+                TAB_BULBS -> BulbsTab(onOpenBulb = onOpenBulb, modifier = Modifier.weight(1f))
+                TAB_SLOTS -> SlotsTab(onOpenGroup = onOpenGroup, modifier = Modifier.weight(1f))
                 else -> DefaultLightingTab(onOpenEditor = onOpenSceneEditor, modifier = Modifier.weight(1f))
             }
         }

@@ -370,6 +370,28 @@ class SceneEditorViewModelTest : DatabaseTest() {
         while (f.scenes.getSceneEffects(f.sceneId)[f.lamp] == null) delay(50)
     }
 
+    /* Individual lights */
+
+    @Test
+    fun anIndividualLight_winsOverItsGroup_andRemovingItHandsTheBulbBack() = editorTest { f ->
+        val one = f.viewModel.uiState.first { it.addableBulbs.size == 2 }.addableBulbs.single { it.name == "One" }
+        f.viewModel.addSingleLight(one.id)
+
+        // It starts on, in the default warm white, beating Ceiling's red on bulb One.
+        val row = f.viewModel.uiState.first { it.singleRows.size == 1 }.singleRows.single()
+        assertEquals(listOf("Two"), f.viewModel.uiState.value.addableBulbs.map { it.name })
+        delay(300)
+        assertEquals(2700, f.fake.bulb(serial1)!!.state.kelvin)
+        assertEquals(LightMode.WHITE, f.storedLight(row.slot.id) { it.isOn }.mode)
+
+        f.viewModel.removeSingleLight(row.slot.id)
+        delay(300)
+        // Back to Ceiling's red, and gone from the scene.
+        assertEquals(null, f.fake.bulb(serial1)!!.state.kelvin)
+        assertEquals(0f, f.fake.bulb(serial1)!!.state.hue)
+        while (f.scenes.getSceneLights(f.sceneId).any { it.slotId == row.slot.id }) delay(50)
+    }
+
     /* All lights */
 
     @Test
@@ -440,5 +462,16 @@ class SceneEditorViewModelTest : DatabaseTest() {
 
     private companion object {
         const val TIMEOUT_MS = 10_000L
+    }
+
+    @Test
+    fun defaultScene_showsAllLightsOn_withNoNameField() = editorTest(
+        sceneIdOverride = { scenes, _, _ -> scenes.ensureDefaultScene() },
+    ) { f ->
+        val state = f.viewModel.uiState.first { it.isLoaded && it.roomRow != null }
+        assertTrue(state.isDefault)
+        // All lights is on even before it has settings of its own, so it can be opened and edited.
+        assertTrue(state.roomRow!!.isOn)
+        assertEquals(LightMode.WHITE, state.roomRow!!.light!!.mode)
     }
 }

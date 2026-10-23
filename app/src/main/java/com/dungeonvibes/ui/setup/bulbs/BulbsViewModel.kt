@@ -6,10 +6,8 @@ import com.dungeonvibes.data.bulb.BulbDiscovery
 import com.dungeonvibes.data.bulb.BulbRepository
 import com.dungeonvibes.data.db.BulbEntity
 import com.dungeonvibes.data.slot.LightSlotRepository
-import com.dungeonvibes.light.LightController
 import com.dungeonvibes.light.LocalNetworkPermission
 import com.dungeonvibes.light.NetworkStatus
-import com.dungeonvibes.light.toAddress
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -23,8 +21,8 @@ import kotlinx.coroutines.launch
 data class BulbItem(
     val bulb: BulbEntity,
     val isOnline: Boolean,
-    /** Name of the slot this bulb is in, or null. */
-    val slotName: String?,
+    /** The groups this bulb is in, in group order (the first wins it when several are lit). */
+    val groupNames: List<String>,
 )
 
 data class BulbsUiState(
@@ -36,10 +34,9 @@ data class BulbsUiState(
 
 @HiltViewModel
 class BulbsViewModel @Inject constructor(
-    private val bulbs: BulbRepository,
+    bulbs: BulbRepository,
     slots: LightSlotRepository,
     private val discovery: BulbDiscovery,
-    private val lights: LightController,
     private val permission: LocalNetworkPermission,
     networkStatus: NetworkStatus,
 ) : ViewModel() {
@@ -53,11 +50,9 @@ class BulbsViewModel @Inject constructor(
         discovery.onlineBulbIds,
         combine(discovery.isScanning, hasScanned) { scanning, scanned -> scanning to scanned },
     ) { bulbList, slotList, assignments, online, (scanning, scanned) ->
-        // Index slots by id and assignments by bulb once, instead of searching per row.
-        val slotNames = HashMap<Long, String>(slotList.size)
-        for (slot in slotList) slotNames[slot.id] = slot.name
-        val slotOfBulb = HashMap<Long, Long>(assignments.size)
-        for (assignment in assignments) slotOfBulb[assignment.bulbId] = assignment.slotId
+        // Index each bulb's groups once, in group order, instead of searching per row.
+        val members = HashMap<Long, HashSet<Long>>()
+        for (assignment in assignments) members.getOrPut(assignment.bulbId) { HashSet() }.add(assignment.slotId)
 
         val items = ArrayList<BulbItem>(bulbList.size)
         for (bulb in bulbList) {
@@ -65,7 +60,7 @@ class BulbsViewModel @Inject constructor(
                 BulbItem(
                     bulb = bulb,
                     isOnline = bulb.id in online,
-                    slotName = slotOfBulb[bulb.id]?.let { slotNames[it] },
+                    groupNames = members[bulb.id]?.let { ids -> slotList.filter { it.id in ids }.map { it.name } }.orEmpty(),
                 ),
             )
         }
@@ -95,15 +90,4 @@ class BulbsViewModel @Inject constructor(
         }
     }
 
-    fun rename(bulb: BulbEntity, name: String) {
-        viewModelScope.launch { bulbs.rename(bulb.id, name) }
-    }
-
-    fun identify(bulb: BulbEntity) {
-        viewModelScope.launch { lights.identify(bulb.toAddress()) }
-    }
-
-    fun remove(bulb: BulbEntity) {
-        viewModelScope.launch { bulbs.remove(bulb.id) }
-    }
 }

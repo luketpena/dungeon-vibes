@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.Switch
@@ -15,13 +16,14 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 
 /**
  * A group of related settings in an outlined box: a header, an optional [hint] under it, then the
  * controls. With [enabled] set, the header carries an on/off switch and the controls show only
  * while it's on (their settings are kept while off); with [enabled] null there's no switch and
- * the controls always show.
+ * the controls always show. An [icon] (a drawable) sits to the left of the title and hint.
  */
 @Composable
 fun SettingsCard(
@@ -30,6 +32,7 @@ fun SettingsCard(
     hint: String? = null,
     enabled: Boolean? = null,
     onEnabledChange: (Boolean) -> Unit = {},
+    icon: Int? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     OutlinedCard(modifier.fillMaxWidth()) {
@@ -42,6 +45,14 @@ fun SettingsCard(
                 .heightIn(min = 48.dp)
                 .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
+            if (icon != null) {
+                Icon(
+                    painterResource(icon),
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 12.dp),
+                )
+            }
             Column(Modifier.weight(1f)) {
                 Text(title, style = MaterialTheme.typography.bodyLarge)
                 if (hint != null) {

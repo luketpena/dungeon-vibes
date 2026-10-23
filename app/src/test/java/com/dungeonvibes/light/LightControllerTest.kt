@@ -268,4 +268,41 @@ class LightControllerTest {
         assertNull(sent.value!!.color)
         assertEquals(500, sent.value!!.fadeMs)
     }
+
+    /* Master dimmer (owner request, Oct 23, 2026) */
+
+    @Test
+    fun dimmer_scalesWhatsSent_andRelightsLitBulbsWhenItMoves() = runTest {
+        val fake = FakeLightAdapter()
+        val dimmer = MasterDimmer()
+        val controller = LightController(setOf(fake), backgroundScope, LightMirror(), dimmer)
+        controller.setDimmer(0.5f)
+
+        controller.turnOn(bulb1, LightState(30f, 1f, 0.8f, null), fadeMs = 0)
+        assertEquals(0.4f, fake.commands.value.filterIsInstance<Command.SetState>().last().state.brightness, 0.001f)
+
+        fake.clearLog()
+        controller.setDimmer(1f)
+        runCurrent()
+        assertEquals(
+            listOf(Command.SetState(serial1, LightState(30f, 1f, 0.8f, null), fadeMs = LightController.DIMMER_FADE_MS, reliable = false)),
+            fake.commands.value,
+        )
+    }
+
+    @Test
+    fun dimmer_neverGoesAllTheWayDark_andLeavesOffBulbsOff() = runTest {
+        val fake = FakeLightAdapter()
+        val dimmer = MasterDimmer()
+        val controller = LightController(setOf(fake), backgroundScope, LightMirror(), dimmer)
+        controller.turnOn(bulb1, LightState(30f, 1f, 0.8f, null), fadeMs = 0)
+        controller.turnOff(bulb1, fadeMs = 0)
+        fake.clearLog()
+
+        controller.setDimmer(0f)
+        runCurrent()
+
+        assertEquals(MasterDimmer.MIN, dimmer.level.value, 0.0001f)
+        assertTrue(fake.commands.value.isEmpty())
+    }
 }

@@ -2,6 +2,9 @@ package com.dungeonvibes.data.fx
 
 import androidx.room.withTransaction
 import com.dungeonvibes.data.TimeSource
+import com.dungeonvibes.data.copyName
+import com.dungeonvibes.data.placedAfter
+import com.dungeonvibes.data.db.AdventureFxEntity
 import com.dungeonvibes.data.db.AppDatabase
 import com.dungeonvibes.data.db.FxEntity
 import com.dungeonvibes.data.db.FxTargetEntity
@@ -19,6 +22,15 @@ data class FxItem(
     /** Group-targeted with no groups left (all deleted): can't be fired until some are picked. */
     val hasNoTargets: Boolean get() = !fx.targetAll && targetSlotIds.isEmpty()
 }
+
+/** A deleted FX with everything that pointed at it, for Undo ([FxRepository.restore]). */
+data class DeletedFx(
+    val fx: FxEntity,
+    val targets: List<FxTargetEntity>,
+    val favorites: List<AdventureFxEntity>,
+    /** Scenes that opened with it (its delete cleared their intro). */
+    val introSceneIds: List<Long> = emptyList(),
+)
 
 /**
  * The FX library (FX_REQUIREMENTS.md → FX library and board): one list shared by every adventure.
@@ -78,7 +90,67 @@ class FxRepository @Inject constructor(
         }
     }
 
-    suspend fun delete(fxId: Long) = fxDao.delete(fxId)
+    /** Deletes an FX (its targets and favorites cascade) and returns what Undo needs, or null if it was gone. */
+    suspend fun delete(fxId: Long): DeletedFx? = db.withTransaction {
+        val fx = fxDao.get(fxId) ?: return@withTransaction null
+        val deleted = DeletedFx(fx, fxDao.targetRows(fxId), fxDao.favoritesOfFx(fxId), sceneDao.introducedBy(fxId))
+        fxDao.delete(fxId)
+        deleted
+    }
+
+    /**
+     * Puts a deleted FX back with its id, place, targets and favorites. Groups, adventures or a
+     * transition scene deleted since are left out (the transition falls back to Return).
+     */
+    suspend fun restore(deleted: DeletedFx) = db.withTransaction {
+        if (fxDao.get(deleted.fx.id) != null) return@withTransaction
+        var fx = deleted.fx
+        val sceneId = fx.transitionSceneId
+        if (sceneId != null && sceneDao.get(sceneId) == null) fx = fx.copy(transitionSceneId = null)
+        fxDao.insert(fx)
+        if (deleted.targets.isNotEmpty()) {
+            val slots = db.lightSlotDao().allIds().toHashSet()
+            val targets = deleted.targets.filter { it.slotId in slots }
+            if (targets.isNotEmpty()) fxDao.insertTargets(targets)
+        }
+        if (deleted.favorites.isNotEmpty()) {
+            val adventureDao = db.adventureDao()
+            val favorites = deleted.favorites.filter { adventureDao.get(it.adventureId) != null }
+            if (favorites.isNotEmpty()) fxDao.insertFavorites(favorites)
+        }
+        if (deleted.introSceneIds.isNotEmpty()) sceneDao.relinkIntros(deleted.introSceneIds, fx.id)
+    }
+
+    /**
+     * Copies an FX (settings and targets) into a new one right after it, named "<name> copy".
+     * Favorites stay with the original. Returns the copy's id, or null if the FX was gone.
+     */
+    suspend fun duplicate(fxId: Long): Long? = db.withTransaction {
+        val source = fxDao.get(fxId) ?: return@withTransaction null
+        val now = time.nowMillis()
+        val copyId = fxDao.insert(
+            source.copy(id = 0, name = copyName(source.name), sortOrder = fxDao.nextSortOrder(), createdAt = now, updatedAt = now),
+        )
+        val targets = fxDao.targetRows(fxId)
+        if (targets.isNotEmpty()) fxDao.insertTargets(targets.map { it.copy(fxId = copyId) })
+        reorder(placedAfter(fxDao.orderedIds(), fxId, copyId))
+        copyId
+    }
+
+    /* Per-adventure favorites */
+
+    /** One adventure's favorite FX ids, in the order they were starred. */
+    fun observeFavorites(adventureId: Long): Flow<List<Long>> = fxDao.observeFavorites(adventureId)
+
+    /** Stars or un-stars an FX in one adventure; a new favorite goes last. */
+    suspend fun setFavorite(adventureId: Long, fxId: Long, favorite: Boolean) = db.withTransaction {
+        if (!favorite) {
+            fxDao.removeFavorite(adventureId, fxId)
+            return@withTransaction
+        }
+        if (fxDao.get(fxId) == null || db.adventureDao().get(adventureId) == null) return@withTransaction
+        fxDao.insertFavorites(listOf(AdventureFxEntity(adventureId, fxId, fxDao.nextFavoritePosition(adventureId))))
+    }
 
     suspend fun reorder(orderedIds: List<Long>) = db.withTransaction {
         val count = orderedIds.size

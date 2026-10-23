@@ -50,6 +50,9 @@ import com.dungeonvibes.ui.common.SettingsCard
 import com.dungeonvibes.ui.common.SteadyRangeSlider
 import com.dungeonvibes.ui.common.SteadySlider
 import com.dungeonvibes.ui.common.Swatch
+import com.dungeonvibes.ui.common.snapPercent
+import com.dungeonvibes.ui.common.snapMs
+import com.dungeonvibes.ui.common.SwatchSize
 import java.util.Locale
 import kotlin.math.roundToInt
 import kotlin.math.sqrt
@@ -74,6 +77,10 @@ internal object FxRanges {
     const val WAVE_MIN = 50
     const val WAVE_MAX = 10_000
     const val MAX_PULSES = 5
+    const val SPIN_STEP_MIN = 50
+    const val SPIN_STEP_MAX = 5_000
+    const val MAX_LAPS = 20
+    const val SPIN_GAP_MAX = 60_000
 
     /** Speeds a Brightness shift switches to when its mode changes (the spec's defaults). */
     val SMOOTH_DEFAULT = 3_000 to 5_000
@@ -104,6 +111,8 @@ fun EffectsSection(
             BrightnessShiftCard(effects, onChange)
             Spacer(Modifier.height(8.dp))
             FlashesCard(effects, onChange, canFlashNow = livePreview && row.hasBulbs, onFlashNow = onFlashNow)
+            Spacer(Modifier.height(8.dp))
+            SpinCard(effects, onChange)
         }
     }
 }
@@ -126,7 +135,11 @@ internal fun MultiColorControls(effects: GroupEffects, onChange: (GroupEffects) 
     Spacer(Modifier.height(8.dp))
     SettingsCard(stringResource(R.string.settings_behavior)) {
         Choice(
-            options = listOf(ColorOrder.IN_SEQUENCE to R.string.fx_order_sequence, ColorOrder.RANDOM to R.string.fx_order_random),
+            options = listOf(
+                ColorOrder.IN_SEQUENCE to R.string.fx_order_sequence,
+                ColorOrder.PING_PONG to R.string.fx_order_ping_pong,
+                ColorOrder.RANDOM to R.string.fx_order_random,
+            ),
             selected = settings.order,
             onSelect = { onChange(effects.copy(colorShift = settings.copy(order = it))) },
         )
@@ -148,6 +161,7 @@ private fun BrightnessShiftCard(effects: GroupEffects, onChange: (GroupEffects) 
     val flicker = settings.mode == BrightnessMode.FLICKER
     LayerCard(
         title = stringResource(R.string.fx_brightness_shift),
+        icon = R.drawable.ic_fx_brightness,
         hint = stringResource(R.string.fx_brightness_shift_hint),
         enabled = settings.enabled,
         onEnabledChange = { onChange(effects.copy(brightnessShift = settings.copy(enabled = it))) },
@@ -183,38 +197,39 @@ private fun FlashesCard(
     val settings = effects.flashes
     LayerCard(
         title = stringResource(R.string.fx_flashes),
+        icon = R.drawable.ic_fx_flash,
         hint = stringResource(R.string.fx_flashes_hint),
         enabled = settings.enabled,
         onEnabledChange = { onChange(effects.copy(flashes = settings.copy(enabled = it))) },
     ) {
+        // Single: one pulse per flash. Flicker: a quick stutter of 2–3, one bright and the rest faint.
+        Choice(
+            options = listOf(false to R.string.fx_flash_single, true to R.string.fx_mode_flicker),
+            selected = settings.flicker,
+            onSelect = { onChange(effects.copy(flashes = settings.withFlicker(it))) },
+        )
         ControlLabel(stringResource(R.string.fx_flash_color))
         FxColorControls(settings.color) { onChange(effects.copy(flashes = settings.copy(color = it))) }
         PercentRangeControl(R.string.fx_peak, settings.peakMin, settings.peak) { lo, hi ->
             onChange(effects.copy(flashes = settings.copy(peakMin = lo, peak = hi)))
         }
-        TimeControl(R.string.fx_attack, settings.attackMs, 0, FxRanges.ENVELOPE_MAX) {
-            onChange(effects.copy(flashes = settings.copy(attackMs = it)))
-        }
-        TimeControl(R.string.fx_hold, settings.holdMs, 0, FxRanges.ENVELOPE_MAX) {
-            onChange(effects.copy(flashes = settings.copy(holdMs = it)))
-        }
-        TimeControl(R.string.fx_release, settings.releaseMs, 0, FxRanges.ENVELOPE_MAX) {
-            onChange(effects.copy(flashes = settings.copy(releaseMs = it)))
+        // Flicker pulses snap on at a fixed speed: Attack and Hold only shape Single flashes.
+        if (settings.flicker) {
+            TimeControl(R.string.fx_release, settings.releaseMs, 0, FxRanges.ENVELOPE_MAX) {
+                onChange(effects.copy(flashes = settings.copy(releaseMs = it)))
+            }
+        } else {
+            AhrControl(
+                attackMs = settings.attackMs,
+                holdMs = settings.holdMs,
+                releaseMs = settings.releaseMs,
+                maxMs = FxRanges.ENVELOPE_MAX,
+                color = LightColors.displayColor(settings.color),
+                onChange = { a, h, r -> onChange(effects.copy(flashes = settings.copy(attackMs = a, holdMs = h, releaseMs = r))) },
+            )
         }
         TimeRangeControl(R.string.fx_gap, settings.gapMinMs, settings.gapMaxMs, FxRanges.GAP_MIN, FxRanges.GAP_MAX) { lo, hi ->
             onChange(effects.copy(flashes = settings.copy(gapMinMs = lo, gapMaxMs = hi)))
-        }
-        CountRangeControl(R.string.fx_pulses, settings.pulsesMin, settings.pulsesMax, 1, FxRanges.MAX_PULSES) { lo, hi ->
-            onChange(effects.copy(flashes = settings.copy(pulsesMin = lo, pulsesMax = hi)))
-        }
-        if (settings.pulsesMax > 1) {
-            TimeRangeControl(
-                R.string.fx_spacing,
-                settings.spacingMinMs,
-                settings.spacingMaxMs,
-                FxRanges.SPACING_MIN,
-                FxRanges.SPACING_MAX,
-            ) { lo, hi -> onChange(effects.copy(flashes = settings.copy(spacingMinMs = lo, spacingMaxMs = hi))) }
         }
         SpreadControl(settings.spread, settings.waveOffsetMs) { spread, offset ->
             onChange(effects.copy(flashes = settings.copy(spread = spread, waveOffsetMs = offset)))
@@ -234,16 +249,52 @@ private fun FlashesCard(
     }
 }
 
+/**
+ * Spin: a color stepping through the group's bulbs in their order (Setup → Groups), lap after lap,
+ * laid over whatever the group shows.
+ */
+@Composable
+private fun SpinCard(effects: GroupEffects, onChange: (GroupEffects) -> Unit) {
+    val settings = effects.spin
+    LayerCard(
+        title = stringResource(R.string.fx_spin),
+        icon = R.drawable.ic_fx_spin,
+        hint = stringResource(R.string.fx_spin_hint),
+        enabled = settings.enabled,
+        onEnabledChange = { onChange(effects.copy(spin = settings.copy(enabled = it))) },
+    ) {
+        FxColorControls(settings.color) { onChange(effects.copy(spin = settings.copy(color = it))) }
+        ControlLabel(stringResource(R.string.fx_level, (settings.level * 100).roundToInt()))
+        SteadySlider(value = settings.level, onValueChange = { onChange(effects.copy(spin = settings.copy(level = snapPercent(it)))) })
+        TimeControl(R.string.fx_spin_step, settings.stepMs, FxRanges.SPIN_STEP_MIN, FxRanges.SPIN_STEP_MAX) {
+            onChange(effects.copy(spin = settings.copy(stepMs = it)))
+        }
+        TimeControl(R.string.fx_spin_gap, settings.lapGapMs, 0, FxRanges.SPIN_GAP_MAX) {
+            onChange(effects.copy(spin = settings.copy(lapGapMs = it)))
+        }
+        SpinDirectionControl(settings.reverse) { onChange(effects.copy(spin = settings.copy(reverse = it))) }
+        AhrControl(
+            attackMs = settings.attackMs,
+            holdMs = settings.holdMs,
+            releaseMs = settings.releaseMs,
+            maxMs = FxRanges.ENVELOPE_MAX,
+            color = LightColors.displayColor(settings.color),
+            onChange = { a, h, r -> onChange(effects.copy(spin = settings.copy(attackMs = a, holdMs = h, releaseMs = r))) },
+        )
+    }
+}
+
 /** A layer: title and on/off switch; its controls show only while it's on (settings are kept). */
 @Composable
 private fun LayerCard(
     title: String,
     hint: String,
+    icon: Int,
     enabled: Boolean,
     onEnabledChange: (Boolean) -> Unit,
     content: @Composable ColumnScope.() -> Unit,
 ) {
-    SettingsCard(title = title, hint = hint, enabled = enabled, onEnabledChange = onEnabledChange, content = content)
+    SettingsCard(title = title, hint = hint, enabled = enabled, onEnabledChange = onEnabledChange, icon = icon, content = content)
 }
 
 /* Palette and colors */
@@ -277,7 +328,7 @@ private fun PaletteEditor(palette: List<FxColor>, locked: Boolean, onChange: (Li
                     .then(if (chosen) Modifier.border(2.dp, ring, CircleShape) else Modifier)
                     .clickable { selected = i },
             ) {
-                Swatch(LightColors.displayColor(palette[i]), 34.dp)
+                Swatch(LightColors.displayColor(palette[i]), SwatchSize.ExtraLarge)
             }
         }
         if (count < GroupEffects.MAX_PALETTE) {
@@ -414,6 +465,17 @@ internal fun SpreadControl(spread: Spread, waveOffsetMs: Int, onChange: (Spread,
     }
 }
 
+/** Spin's direction: through the bulbs in their order, or backwards (owner request). */
+@Composable
+internal fun SpinDirectionControl(reverse: Boolean, onChange: (Boolean) -> Unit) {
+    ControlLabel(stringResource(R.string.fx_spin_direction))
+    Choice(
+        options = listOf(false to R.string.fx_spin_forward, true to R.string.fx_spin_reverse),
+        selected = reverse,
+        onSelect = onChange,
+    )
+}
+
 @Composable
 internal fun <T> Choice(options: List<Pair<T, Int>>, selected: T, onSelect: (T) -> Unit) {
     val count = options.size
@@ -431,11 +493,19 @@ internal fun <T> Choice(options: List<Pair<T, Int>>, selected: T, onSelect: (T) 
 
 /** One duration on a squared scale, so short times get most of the slider. */
 @Composable
-internal fun TimeControl(labelRes: Int, valueMs: Int, minMs: Int, maxMs: Int, onChange: (Int) -> Unit) {
+internal fun TimeControl(
+    labelRes: Int,
+    valueMs: Int,
+    minMs: Int,
+    maxMs: Int,
+    enabled: Boolean = true,
+    onChange: (Int) -> Unit,
+) {
     ControlLabel(stringResource(labelRes, formatDuration(valueMs)))
     SteadySlider(
         value = timeToPosition(valueMs, minMs, maxMs),
         onValueChange = { onChange(positionToTime(it, minMs, maxMs)) },
+        enabled = enabled,
     )
 }
 
@@ -477,6 +547,18 @@ internal fun CountRangeControl(labelRes: Int, low: Int, high: Int, min: Int, max
     )
 }
 
+/** One whole number on a stepped slider. */
+@Composable
+internal fun CountControl(labelRes: Int, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
+    ControlLabel(stringResource(labelRes, value))
+    SteadySlider(
+        value = value.coerceIn(min, max).toFloat(),
+        onValueChange = { onChange(it.roundToInt()) },
+        valueRange = min.toFloat()..max.toFloat(),
+        steps = max - min - 1,
+    )
+}
+
 @Composable
 internal fun ControlLabel(text: String) {
     Text(
@@ -496,21 +578,17 @@ internal fun timeToPosition(ms: Int, minMs: Int, maxMs: Int): Float =
 internal fun positionToTime(position: Float, minMs: Int, maxMs: Int): Int {
     val p = position.coerceIn(0f, 1f)
     val raw = minMs + (maxMs - minMs) * p * p
-    val step = when {
-        raw < 1_000f -> 10
-        raw < 10_000f -> 100
-        else -> 1_000
-    }
-    return ((raw / step).roundToInt() * step).coerceIn(minMs, maxMs)
+    return snapMs(raw).coerceIn(minMs, maxMs)
 }
 
-private fun snapPercent(value: Float): Float = (value * 100f).roundToInt() / 100f
 
-/** "0.05 s", "1.5 s", "12 s", "2 min 30 s". */
-internal fun formatDuration(ms: Int): String = when {
-    ms < 1_000 -> String.format(Locale.getDefault(), "%.2f s", ms / 1_000f)
-    ms < 10_000 -> String.format(Locale.getDefault(), "%.1f s", ms / 1_000f)
-    ms < 60_000 -> "${ms / 1_000} s"
-    ms % 60_000 < 1_000 -> "${ms / 60_000} min"
-    else -> "${ms / 60_000} min ${(ms % 60_000) / 1_000} s"
+/**
+ * "0.3 s", "1.0 s", "1.5 s", "2 min 0.0 s", "2 min 30.5 s". Always one decimal, so a label
+ * doesn't change length as the slider moves (owner request: 1 → 1.5 → 2 looked choppy).
+ */
+internal fun formatDuration(ms: Int): String {
+    if (ms < 60_000) return seconds(ms)
+    return "${ms / 60_000} min ${seconds(ms % 60_000)}"
 }
+
+private fun seconds(ms: Int): String = String.format(Locale.getDefault(), "%.1f s", ms / 1_000f)
