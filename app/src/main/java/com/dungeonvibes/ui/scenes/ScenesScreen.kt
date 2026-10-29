@@ -18,10 +18,9 @@ import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
+import androidx.compose.material3.PrimaryTabRow
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Tab
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.adaptive.ExperimentalMaterial3AdaptiveApi
@@ -125,20 +124,22 @@ fun ScenesScreen() {
     )
 }
 
-/** Scenes | FX: the two libraries share the tab. */
+/** Scenes | FX: the two libraries share the nav destination, as tabs (the same row as Setup's). */
 @Composable
 private fun LibrarySwitch(showFx: Boolean, onChange: (Boolean) -> Unit) {
-    SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp)) {
-        SegmentedButton(
+    PrimaryTabRow(selectedTabIndex = if (showFx) 1 else 0) {
+        Tab(
             selected = !showFx,
             onClick = { onChange(false) },
-            shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-        ) { Text(stringResource(R.string.library_scenes)) }
-        SegmentedButton(
+            text = { Text(stringResource(R.string.library_scenes)) },
+            icon = { Icon(painterResource(R.drawable.ic_library_scenes), contentDescription = null) },
+        )
+        Tab(
             selected = showFx,
             onClick = { onChange(true) },
-            shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-        ) { Text(stringResource(R.string.library_fx)) }
+            text = { Text(stringResource(R.string.library_fx)) },
+            icon = { Icon(painterResource(R.drawable.ic_fx), contentDescription = null) },
+        )
     }
 }
 

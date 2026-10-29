@@ -1,11 +1,44 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Material "drag_handle" -->
+<!-- Lucide "grip-horizontal", stroke 2.5 (lucide.dev, ISC; see LICENSE-lucide.txt) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M20,9H4v2h16V9zM4,15h16v-2H4V15z" />
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M11 9 A1 1 0 1 0 13 9 A1 1 0 1 0 11 9 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18 9 A1 1 0 1 0 20 9 A1 1 0 1 0 18 9 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4 9 A1 1 0 1 0 6 9 A1 1 0 1 0 4 9 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M11 15 A1 1 0 1 0 13 15 A1 1 0 1 0 11 15 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18 15 A1 1 0 1 0 20 15 A1 1 0 1 0 18 15 Z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M4 15 A1 1 0 1 0 6 15 A1 1 0 1 0 4 15 Z" />
 </vector>

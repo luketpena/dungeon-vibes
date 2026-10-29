@@ -4,6 +4,8 @@ import androidx.room.ColumnInfo
 import androidx.room.Embedded
 import androidx.room.Entity
 import androidx.room.ForeignKey
+import androidx.room.Index
+import androidx.room.PrimaryKey
 
 /* Effect settings (FX_REQUIREMENTS.md → The layers) */
 
@@ -157,8 +159,43 @@ data class SceneLightEffectsEntity(
     val sceneId: Long,
     val slotId: Long,
     @Embedded(prefix = "colorShift_") val colorShift: ColorShiftSettings,
-    @Embedded(prefix = "brightnessShift_") val brightnessShift: BrightnessShiftSettings,
-    @Embedded(prefix = "flashes_") val flashes: FlashSettings,
+    // Brightness shift, Flashes and Spin are layers since database version 13
+    // (scene_effect_layers); these columns stay only so the table needn't be rebuilt.
+    @Embedded(prefix = "brightnessShift_") val legacyBrightnessShift: BrightnessShiftSettings = BrightnessShiftSettings(),
+    @Embedded(prefix = "flashes_") val legacyFlashes: FlashSettings = FlashSettings(),
+    @Embedded(prefix = "spin_") val legacySpin: SpinSettings = SpinSettings(),
+)
+
+/** The kinds of layered effect a group can stack (owner request, Oct 23, 2026). */
+enum class EffectLayerType { BRIGHTNESS_SHIFT, FLASHES, SPIN }
+
+/**
+ * One layered effect on one group in one scene (database version 13): any number per group, of
+ * any kind, in priority order ([position] 0 is the top: it wins where layers overlap). Only the
+ * settings for its [type] are used; the others keep their defaults. Belongs to its scene_lights
+ * row, so deleting the scene or the group cascades. The `enabled` columns inside the settings are
+ * unused here (a layer that exists plays).
+ */
+@Entity(
+    tableName = "scene_effect_layers",
+    foreignKeys = [
+        ForeignKey(
+            entity = SceneLightEntity::class,
+            parentColumns = ["sceneId", "slotId"],
+            childColumns = ["sceneId", "slotId"],
+            onDelete = ForeignKey.CASCADE,
+        ),
+    ],
+    indices = [Index(value = ["sceneId", "slotId"])],
+)
+data class EffectLayerEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val sceneId: Long,
+    val slotId: Long,
+    val position: Int,
+    val type: EffectLayerType,
+    @Embedded(prefix = "brightnessShift_") val brightnessShift: BrightnessShiftSettings = BrightnessShiftSettings(),
+    @Embedded(prefix = "flashes_") val flashes: FlashSettings = FlashSettings(),
     @Embedded(prefix = "spin_") val spin: SpinSettings = SpinSettings(),
 )
 

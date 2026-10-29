@@ -22,7 +22,7 @@ import com.dungeonvibes.ui.setup.slots.SlotsTab
 
 private const val TAB_BULBS = 0
 private const val TAB_SLOTS = 1
-private const val TAB_DEFAULT = 2
+private const val TAB_SETTINGS = 2
 
 /**
  * @param onOpenDebug null hides the debug button (release builds).
@@ -59,21 +59,25 @@ fun SetupScreen(
                     selected = selectedTab == TAB_BULBS,
                     onClick = { selectedTab = TAB_BULBS },
                     text = { Text(stringResource(R.string.setup_tab_bulbs)) },
+                    icon = { Icon(painterResource(R.drawable.ic_setup_bulbs), contentDescription = null) },
                 )
                 Tab(
                     selected = selectedTab == TAB_SLOTS,
                     onClick = { selectedTab = TAB_SLOTS },
                     text = { Text(stringResource(R.string.setup_tab_slots)) },
+                    icon = { Icon(painterResource(R.drawable.ic_setup_groups), contentDescription = null) },
                 )
                 Tab(
-                    selected = selectedTab == TAB_DEFAULT,
-                    onClick = { selectedTab = TAB_DEFAULT },
-                    text = { Text(stringResource(R.string.setup_tab_default)) },
+                    selected = selectedTab == TAB_SETTINGS,
+                    onClick = { selectedTab = TAB_SETTINGS },
+                    text = { Text(stringResource(R.string.setup_tab_settings)) },
+                    icon = { Icon(painterResource(R.drawable.ic_setup_settings), contentDescription = null) },
                 )
             }
             when (selectedTab) {
                 TAB_BULBS -> BulbsTab(onOpenBulb = onOpenBulb, modifier = Modifier.weight(1f))
                 TAB_SLOTS -> SlotsTab(onOpenGroup = onOpenGroup, modifier = Modifier.weight(1f))
+                // Settings holds only the default lighting for now; more settings will join it.
                 else -> DefaultLightingTab(onOpenEditor = onOpenSceneEditor, modifier = Modifier.weight(1f))
             }
         }

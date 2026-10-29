@@ -23,6 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.dungeonvibes.R
+import com.dungeonvibes.ui.common.FieldLabel
 import com.dungeonvibes.ui.common.SteadySlider
 
 /**
@@ -156,21 +157,7 @@ private fun MiniTimeSlider(
     onChange: (Int) -> Unit,
 ) {
     Column(modifier) {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(
-                stringResource(labelRes),
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                formatDuration(valueMs),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-            )
-        }
+        FieldLabel(stringResource(labelRes), formatDuration(valueMs), topPadding = 0.dp)
         SteadySlider(
             value = timeToPosition(valueMs, 0, maxMs),
             onValueChange = { position ->

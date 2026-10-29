@@ -151,7 +151,7 @@ fun GroupDetailScreen(slotId: Long, onBack: () -> Unit) {
             }
             item(key = "heading") {
                 Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 4.dp)) {
-                    Text(stringResource(R.string.slot_bulbs_heading), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.slot_bulbs_heading), style = MaterialTheme.typography.titleMedium)
                     Text(
                         stringResource(if (ordered.size > 1) R.string.group_order_hint else R.string.group_bulbs_hint),
                         style = MaterialTheme.typography.bodySmall,

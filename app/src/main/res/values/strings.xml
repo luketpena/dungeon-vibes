@@ -8,24 +8,16 @@
     <string name="setup_tab_bulbs">Bulbs</string>
     <string name="setup_tab_slots">Groups</string>
 
-    <string name="placeholder_adventures">Your adventures will live here.</string>
-    <string name="placeholder_scenes">Your scene library will live here.</string>
-    <string name="placeholder_coming_in_phase">Coming in phase %1$d.</string>
-
     <string name="action_back">Back</string>
     <string name="action_cancel">Cancel</string>
     <string name="action_save">Save</string>
     <string name="action_delete">Delete</string>
     <string name="action_remove">Remove</string>
     <string name="action_identify">Identify</string>
-    <string name="action_reorder">Drag to reorder</string>
     <string name="action_undo">Undo</string>
-    <string name="action_more">More options</string>
     <string name="action_duplicate">Duplicate</string>
     <string name="deleted_message">Deleted %1$s</string>
     <string name="label_name">Name</string>
-
-    <string name="banner_not_on_wifi">Not on Wi-Fi. Connect to the same Wi-Fi as your bulbs to scan and control them.</string>
 
     <!-- Setup: Bulbs -->
     <string name="bulb_online">Online</string>
@@ -38,34 +30,19 @@
     <string name="bulb_status_label">Status</string>
     <string name="bulb_address">Address</string>
     <string name="bulb_groups_heading">Groups</string>
-    <string name="bulb_groups_hint">A bulb can be in several groups. When more than one is lit, the highest in Setup → Groups wins it.</string>
-    <string name="bulb_groups_none">No groups yet. Add them in Setup → Groups.</string>
-    <string name="bulb_group_top">Wins this bulb when several of its groups are lit</string>
     <string name="bulb_dialog_title">Bulb</string>
     <string name="bulb_remove_title">Remove %1$s?</string>
-    <string name="bulb_remove_message">It will come back on the next scan if it\'s still on your Wi-Fi. Removing is mainly for bulbs that no longer exist.</string>
     <string name="bulbs_empty_title">No bulbs found</string>
-    <string name="bulbs_empty_check_app">Set up your bulbs in the LIFX app first.</string>
-    <string name="bulbs_empty_check_wifi">Make sure this phone is on the same Wi-Fi as the bulbs.</string>
-    <string name="bulbs_empty_check_guest">Guest networks usually block devices from seeing each other; use your main network.</string>
-    <string name="bulbs_empty_pull">Pull down to scan again.</string>
     <string name="permission_title">Allow access to your bulbs</string>
-    <string name="permission_message">Dungeon Vibes talks to your bulbs directly over your Wi-Fi. Android needs your permission for the app to reach devices on your local network.</string>
     <string name="permission_allow">Allow</string>
     <string name="permission_open_settings">Open settings</string>
 
     <!-- Setup: Groups (called light slots in the code) -->
     <string name="slot_add">Add group</string>
     <string name="slot_edit">Edit group</string>
-    <string name="slot_name_hint">e.g. Ceiling, Left Lamp</string>
     <string name="slot_bulbs_heading">Bulbs in this group</string>
-    <string name="slot_no_bulbs">No bulbs assigned</string>
-    <string name="slot_no_bulbs_found">No bulbs yet. Scan for them on the Bulbs tab.</string>
     <string name="slot_bulb_also_in">Also in %1$s</string>
-    <string name="slots_order_hint">When groups share a bulb, the higher group wins it. Drag to change the order.</string>
-    <string name="slots_empty">No groups yet. Add groups like \"Ceiling\" or \"Left Lamp\", then put bulbs in them. Scenes control groups, so the same scene works wherever you play.</string>
     <string name="slot_delete_title">Delete %1$s?</string>
-    <string name="slot_delete_unused">No scenes use this group.</string>
 
     <!-- Scenes -->
     <string name="action_apply">Apply scene</string>
@@ -73,24 +50,17 @@
     <string name="scene_new_name">New Scene</string>
     <string name="scene_empty_palette">Empty scene</string>
     <string name="scene_untitled">Untitled scene</string>
-    <string name="scenes_empty">No scenes yet. Tap New scene to build a look, like a candle-lit tavern or a cold blue crypt.</string>
-    <string name="scene_none_selected">Pick a scene to edit it, or create a new one.</string>
     <string name="scene_delete_title">Delete %1$s?</string>
-    <string name="scene_delete_message">Copies of this scene in your adventures are kept; they just can\'t be reset to it any more.</string>
-    <string name="scene_missing">This scene has been deleted.</string>
     <string name="scene_fade">Fade: %1$.1f s</string>
-    <string name="scene_no_slots">No groups yet. Add them in Setup → Groups.</string>
     <string name="scene_mode_color">Color</string>
     <string name="scene_mode_white">White</string>
     <string name="scene_hue">Hue</string>
     <string name="scene_saturation">Saturation</string>
     <string name="scene_brightness">Brightness</string>
-    <string name="scene_temperature">Temperature: %1$d K</string>
+    <string name="scene_temperature">Temperature</string>
     <string name="scene_reset_to_library">Reset to library version</string>
     <string name="scene_save_to_library">Save to library</string>
-    <string name="scene_saved_to_library">Saved to your scene library</string>
     <string name="scene_reset_title">Reset to library version?</string>
-    <string name="scene_reset_message">This scene\'s name, fade and light settings will be replaced with the library scene\'s. Your changes to this copy will be lost.</string>
     <string name="scene_reset_confirm">Reset</string>
 
     <!-- Adventures and play -->
@@ -98,24 +68,16 @@
     <string name="action_rename">Rename</string>
     <string name="adventure_add">New adventure</string>
     <string name="adventure_rename">Rename adventure</string>
-    <string name="adventures_empty">No adventures yet. Create one for each campaign or session, then fill it with scenes from your library or build new ones.</string>
-    <string name="adventure_none_selected">Pick an adventure to play it.</string>
-    <string name="adventure_missing">This adventure has been deleted.</string>
     <string name="adventure_delete_title">Delete %1$s?</string>
     <string name="play_edit">Edit scenes</string>
+    <string name="play_tile_edit">Edit scene</string>
     <string name="play_done_editing">Done editing</string>
-    <string name="play_edit_hint">Editing: tap a scene to change it, long-press and drag to reorder. Scenes won\'t play while editing.</string>
     <string name="play_add_scene">Add scene</string>
     <string name="play_add_blank">New blank scene</string>
     <string name="play_add_from_library">From library</string>
     <string name="play_add_selected">Add (%1$d)</string>
-    <string name="play_library_empty">Your scene library is empty. Build scenes on the Scenes tab to reuse them here.</string>
-    <string name="play_empty">No scenes in this adventure yet. Tap Add scene to start.</string>
-    <string name="play_delete_message">This only removes it from this adventure. Your library is unchanged.</string>
     <string name="play_active">Active</string>
     <string name="play_active_with_problems">Active: some bulbs didn\'t respond</string>
-    <string name="play_slot_failed">Some bulbs in this group didn\'t respond</string>
-    <string name="action_open_debug">Debug tools</string>
 
     <!-- Debug screen (debug builds only) -->
     <string name="debug_title">Debug</string>
@@ -126,28 +88,20 @@
         <item quantity="one">%1$d scene</item>
         <item quantity="other">%1$d scenes</item>
     </plurals>
-    <plurals name="adventure_delete_message">
-        <item quantity="one">Its %1$d scene will be deleted too. Your scene library is unchanged.</item>
-        <item quantity="other">Its %1$d scenes will be deleted too. Your scene library is unchanged.</item>
-    </plurals>
     <plurals name="apply_failed">
         <item quantity="one">%1$d bulb didn\'t respond.</item>
         <item quantity="other">%1$d bulbs didn\'t respond.</item>
     </plurals>
-    <plurals name="slot_delete_used">
-        <item quantity="one">%1$d scene uses this group. Its settings for this group will be removed.</item>
-        <item quantity="other">%1$d scenes use this group. Their settings for this group will be removed.</item>
-    </plurals>
 
     <!-- Effects (FX) -->
     <string name="fx_section">Effects</string>
-    <string name="fx_off_hint">Turn this group on to use effects.</string>
+    <string name="fx_layers">Layered effects</string>
+    <string name="fx_layer_add">Add effect</string>
+    <string name="fx_layer_remove">Remove effect</string>
+    <string name="fx_layer_remove_title">Remove %1$s?</string>
     <string name="fx_color_shift">Color shift</string>
-    <string name="fx_color_shift_hint">Drifts through a palette of colors</string>
     <string name="fx_brightness_shift">Brightness shift</string>
-    <string name="fx_brightness_shift_hint">Breathes or flickers within a range</string>
     <string name="fx_flashes">Flashes</string>
-    <string name="fx_flashes_hint">Occasional pulses that take over the group</string>
     <string name="fx_add_color">Add color</string>
     <string name="settings_color">Color</string>
     <string name="lights_menu">Lights</string>
@@ -156,77 +110,62 @@
     <string name="default_lighting">Default lighting</string>
     <string name="lights_scanning">Looking for bulbs…</string>
     <string name="lights_scan_again">Check</string>
-    <string name="lights_dimmer">Dimmer: %1$d %%</string>
-    <string name="default_lighting_hint">How a neutral room looks. Switch it on from the lights menu (the bulb in the top bar); switching it off goes back to the scene that was showing.</string>
-    <string name="setup_tab_default">Default</string>
+    <string name="lights_dimmer">Dimmer</string>
+    <string name="setup_tab_settings">Settings</string>
     <string name="default_lighting_edit">Edit default lighting</string>
-    <string name="settings_behavior">Behavior</string>
-    <string name="palette_brightness_locked">Brightness shared by every color. Tap to set each color on its own.</string>
-    <string name="palette_brightness_unlocked">Each color has its own brightness. Tap to share one brightness.</string>
-    <string name="fx_remove_color">Remove color</string>
+    <string name="settings_behavior">Multi-color behavior</string>
     <string name="fx_order_sequence">In order</string>
     <string name="fx_order_random">Random</string>
-    <string name="fx_blend">Blend: %1$s</string>
-    <string name="fx_hold">Hold: %1$s</string>
+    <string name="fx_blend">Blend</string>
+    <string name="fx_hold">Hold</string>
     <string name="fx_mode_smooth">Smooth</string>
     <string name="fx_mode_flicker">Flicker</string>
-    <string name="fx_brightness_range">Brightness: %1$d–%2$d %%</string>
-    <string name="fx_cycle">Cycle length: %1$s</string>
-    <string name="fx_change_every">Changes every: %1$s</string>
+    <string name="fx_brightness_range">Brightness</string>
+    <string name="fx_cycle">Cycle length</string>
+    <string name="fx_change_every">Changes every</string>
     <string name="fx_flash_color">Flash color</string>
-    <string name="fx_peak">Peak brightness: %1$d–%2$d %%</string>
+    <string name="fx_peak">Peak brightness</string>
     <string name="fx_ahr_attack">Attack</string>
     <string name="fx_ahr_hold">Hold</string>
     <string name="fx_ahr_release">Release</string>
-    <string name="fx_release">Release: %1$s</string>
-    <string name="fx_gap">Time between flashes: %1$s</string>
+    <string name="fx_release">Release</string>
+    <string name="fx_gap">Time between flashes</string>
     <string name="fx_flash_single">Single</string>
-    <string name="fx_pulses">Pulses per burst: %1$s</string>
-    <string name="fx_spacing">Time between pulses: %1$s</string>
+    <string name="fx_pulses">Pulses per burst</string>
+    <string name="fx_spacing">Time between pulses</string>
     <string name="fx_spread">Spread</string>
     <string name="fx_spread_together">Together</string>
     <string name="fx_spread_independent">Independent</string>
     <string name="fx_spread_wave">Wave</string>
-    <string name="fx_wave_delay">Wave delay: %1$s</string>
+    <string name="fx_wave_delay">Wave delay</string>
     <string name="fx_flash_now">Flash now</string>
-    <string name="fx_flash_now_hint">Give this group bulbs in Setup to try it.</string>
     <string name="fx_has_effects">Has effects</string>
     <string name="scene_mode_multi">Multi-color</string>
     <string name="scene_all_lights">All lights</string>
     <string name="scene_singles_title">Individual lights</string>
-    <string name="scene_singles_hint">Single lights override group settings</string>
     <string name="scene_singles_add">Add light</string>
+    <string name="scene_groups_title">Light groups</string>
     <string name="scene_singles_pick_title">Add individual lights</string>
     <string name="scene_singles_filter">Find a bulb</string>
-    <string name="scene_singles_no_match">No bulbs match.</string>
     <plurals name="scene_singles_add_count">
         <item quantity="one">Add %d light</item>
         <item quantity="other">Add %d lights</item>
     </plurals>
     <string name="scene_single_hint">Individual light</string>
-    <string name="scene_single_remove">Remove %1$s from this scene</string>
     <string name="scene_using_all_lights">Using All lights</string>
     <string name="fx_notification_channel">Effects</string>
     <string name="fx_notification_title">Effects running</string>
-    <string name="fx_notification_text">Your lights keep animating while the screen is off.</string>
     <string name="fx_notification_stop">Stop</string>
     <string name="play_effects_running">✦ Effects running</string>
     <string name="play_stop_effects">Stop effects</string>
-    <string name="action_expand">Show settings</string>
-    <string name="action_collapse">Hide settings</string>
 
     <!-- FX library and board -->
     <string name="library_scenes">Scenes</string>
     <string name="library_fx">FX</string>
     <string name="fx_add">New FX</string>
     <string name="fx_new_name">New FX</string>
-    <string name="fx_empty">No FX yet. Build a flash, a flicker or a spell to fire during play.</string>
-    <string name="fx_none_selected">Pick an FX to edit it, or create a new one.</string>
-    <string name="fx_missing">This FX has been deleted.</string>
     <string name="fx_delete_title">Delete %1$s?</string>
-    <string name="fx_delete_message">Scenes that end in it are not affected; it just leaves every FX board.</string>
     <string name="fx_try">Try it</string>
-    <string name="fx_try_hint">Try it plays this FX on the bulbs, without its transition.</string>
     <string name="fx_primitive">Type</string>
     <string name="fx_pulse">Pulse</string>
     <string name="fx_flicker">Flicker</string>
@@ -235,61 +174,52 @@
     <string name="fx_channel_saturation">Saturation</string>
     <string name="fx_channel_brightness">Brightness</string>
     <string name="fx_pulse_color">Pulse color</string>
-    <string name="fx_duration">Duration: %1$s</string>
-    <string name="fx_depth">Depth: %1$d %%</string>
+    <string name="fx_duration">Duration</string>
+    <string name="fx_depth">Depth</string>
     <string name="fx_targets">Targets</string>
     <string name="fx_targets_all">All lights</string>
     <string name="fx_targets_groups">Groups</string>
-    <string name="fx_targets_none">Pick at least one group.</string>
     <string name="fx_transition">Then</string>
     <string name="fx_transition_return">Return</string>
     <string name="fx_transition_off">Lights off</string>
     <string name="fx_transition_scene">Scene</string>
     <string name="fx_transition_pick">Move into this library scene:</string>
-    <string name="fx_transition_no_scenes">Your scene library is empty.</string>
     <string name="fx_summary_all">%1$s · All lights</string>
     <string name="fx_summary_groups">%1$s · %2$s</string>
     <string name="fx_board">FX</string>
     <string name="fx_board_all">All FX</string>
     <string name="fx_board_favorites">Favorites</string>
-    <string name="fx_board_star_hint">Star the FX this adventure uses to keep them up front.</string>
-    <string name="fx_favorite">Add %1$s to this adventure\'s favorites</string>
-    <string name="fx_unfavorite">Remove %1$s from this adventure\'s favorites</string>
-    <string name="fx_board_empty">No FX yet. Build them under Scenes → FX.</string>
-    <string name="fx_board_return_hint">Play a scene first: some FX return to it.</string>
     <string name="play_ghost_add">Add to this adventure</string>
     <string name="play_ghost_label">From your library</string>
     <string name="group_add_bulbs">Add bulbs</string>
-    <string name="group_order_hint">Drag to set the order Wave and Spin follow across this group.</string>
-    <string name="group_bulbs_hint">Add the bulbs that make up this group. A bulb can be in several groups.</string>
-    <string name="group_remove_bulb">Take %1$s out of this group</string>
     <string name="group_delete">Delete group</string>
-    <string name="group_add_none">Every bulb is already in this group.</string>
     <string name="group_add_confirm">Add</string>
     <string name="fx_strobe">Strobe</string>
     <string name="fx_spin">Spin</string>
     <string name="fx_card_timing">Timing</string>
+    <string name="fx_card_behavior">Behavior</string>
     <string name="fx_card_transition">Then</string>
-    <string name="fx_strobe_rate">Flashes a second: %1$s</string>
-    <string name="fx_level">Brightness: %1$d %%</string>
-    <string name="fx_spin_step">Time to the next bulb: %1$s</string>
+    <string name="fx_strobe_rate">Flashes a second</string>
+    <string name="fx_level">Brightness</string>
+    <string name="fx_spin_step">Time to the next bulb</string>
     <string name="fx_spin_direction">Direction</string>
     <string name="fx_spin_forward">Forward</string>
     <string name="fx_spin_reverse">Reverse</string>
-    <string name="fx_spin_laps">Laps: %1$d</string>
-    <string name="fx_spin_order_hint">Spin goes through the targets in order: groups as listed, each group\'s bulbs in its order (Setup → Groups).</string>
+    <string name="fx_spin_laps">Laps</string>
     <string name="fx_order_ping_pong">Ping-pong</string>
-    <string name="fx_spin_hint">A color that steps through the group\'s bulbs in order</string>
-    <string name="fx_spin_gap">Pause after each lap: %1$s</string>
-    <string name="scene_fade_label">Fade in: %1$s</string>
-    <string name="scene_locked_by_all_lights">Locked by All lights</string>
+    <string name="fx_spin_gap">Pause after each lap</string>
+    <string name="scene_fade_label">Fade in</string>
     <string name="scene_intro">Introduction</string>
     <string name="scene_intro_fx">Intro FX</string>
     <string name="scene_intro_none">None</string>
     <string name="scene_intro_clear">Clear</string>
-    <string name="scene_intro_selected">Selected</string>
     <plurals name="lights_unreachable">
         <item quantity="one">%1$d bulb not answering</item>
         <item quantity="other">%1$d bulbs not answering</item>
     </plurals>
+    <!-- Values shown on the right of a form label (FieldLabel). -->
+    <string name="value_percent">%1$d %%</string>
+    <string name="value_percent_range">%1$d – %2$d %%</string>
+    <string name="value_range">%1$s – %2$s</string>
+    <string name="value_kelvin">%1$d K</string>
 </resources>

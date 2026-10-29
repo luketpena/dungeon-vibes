@@ -1,5 +1,8 @@
 package com.dungeonvibes.light.fx
 
+import com.dungeonvibes.data.scene.withBrightnessShift
+import com.dungeonvibes.data.scene.flashes
+import com.dungeonvibes.data.scene.withFlashes
 import com.dungeonvibes.data.db.BrightnessMode
 import com.dungeonvibes.data.db.BrightnessShiftSettings
 import com.dungeonvibes.data.db.ColorOrder
@@ -7,6 +10,7 @@ import com.dungeonvibes.data.db.ColorShiftSettings
 import com.dungeonvibes.data.db.FlashSettings
 import com.dungeonvibes.data.db.FxColor
 import com.dungeonvibes.data.db.Spread
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.light.LightState
 import kotlin.random.Random
@@ -134,15 +138,13 @@ class EffectEngineTest {
     @Test
     fun smooth_startsLow_peaksMidCycle_andStaysInRange() {
         val run = run(
-            GroupEffects(
-                brightnessShift = BrightnessShiftSettings(
+            GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
                     enabled = true,
                     levelMin = 0.2f,
                     levelMax = 0.8f,
                     speedMinMs = 1_000,
                     speedMaxMs = 1_000,
-                ),
-            ),
+                )))),
         )
         assertEquals(0.2f, run.at(0, 0).brightness, 0.001f)
         assertEquals(0.5f, run.at(0, 250).brightness, 0.001f)
@@ -156,16 +158,14 @@ class EffectEngineTest {
     @Test
     fun flicker_jumpsBetweenRandomLevelsInsideTheRange() {
         val run = run(
-            GroupEffects(
-                brightnessShift = BrightnessShiftSettings(
+            GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
                     enabled = true,
                     mode = BrightnessMode.FLICKER,
                     levelMin = 0.3f,
                     levelMax = 0.6f,
                     speedMinMs = 100,
                     speedMaxMs = 100,
-                ),
-            ),
+                )))),
         )
         val seen = HashSet<Float>()
         for (k in 0 until 100) {
@@ -179,16 +179,14 @@ class EffectEngineTest {
     @Test
     fun flicker_glidesBetweenLevels_withoutParking() {
         val run = run(
-            GroupEffects(
-                brightnessShift = BrightnessShiftSettings(
+            GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
                     enabled = true,
                     mode = BrightnessMode.FLICKER,
                     levelMin = 0f,
                     levelMax = 1f,
                     speedMinMs = 400,
                     speedMaxMs = 400,
-                ),
-            ),
+                )))),
         )
         var previous = run.at(0, 0).brightness
         var still = 0
@@ -204,15 +202,13 @@ class EffectEngineTest {
 
     @Test
     fun lookAhead_samplesShiftsAhead_butNotFlashes() {
-        val effects = GroupEffects(
-            brightnessShift = BrightnessShiftSettings(
+        val effects = GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
                 enabled = true,
                 levelMin = 0.2f,
                 levelMax = 0.8f,
                 speedMinMs = 1_000,
                 speedMaxMs = 1_000,
-            ),
-        )
+            ))))
         val out = Hsbk()
         val transition = run(effects).sample(0, 200, out, lookAheadMs = 300)
         assertEquals(300, transition)
@@ -221,8 +217,7 @@ class EffectEngineTest {
 
     /* Flashes */
 
-    private fun flashes(flicker: Boolean = false, spread: Spread = Spread.TOGETHER) = GroupEffects(
-        flashes = FlashSettings(
+    private fun flashes(flicker: Boolean = false, spread: Spread = Spread.TOGETHER) = GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(
             enabled = true,
             spread = spread,
             color = FxColor.white(6_500),
@@ -232,8 +227,7 @@ class EffectEngineTest {
             releaseMs = 200,
             gapMinMs = 1_000,
             gapMaxMs = 1_000,
-        ).withFlicker(flicker),
-    )
+        ).withFlicker(flicker))))
 
     @Test
     fun envelope_risesOverAttack_holds_andFallsOverRelease() {
@@ -274,7 +268,7 @@ class EffectEngineTest {
     fun flashRelease_bringsTheSceneColorBackFasterThanItsBrightness() {
         // A white flash over a red base (saturation 1, brightness 0.2), with a 1 s release from
         // 1200 ms. At the release's start it aims 200 ms in: 80 % of the flash left.
-        val slow = flashes().let { it.copy(flashes = it.flashes.copy(releaseMs = 1_000)) }
+        val slow = flashes().let { it.withFlashes(it.flashes.copy(releaseMs = 1_000)) }
         val out = run(slow).at(0, 1_200)
         assertEquals(0.2f + 0.8f * 0.8f, out.brightness, 0.0001f)
         // Color: 0.8² = 64 % of the flash left, so the red is already 36 % back (straight: 20 %).
@@ -283,8 +277,7 @@ class EffectEngineTest {
 
     @Test
     fun flash_takesPrecedenceOverBrightnessShift() {
-        val effects = flashes().copy(
-            brightnessShift = BrightnessShiftSettings(enabled = true, levelMin = 0f, levelMax = 0.1f),
+        val effects = flashes().withBrightnessShift(BrightnessShiftSettings(enabled = true, levelMin = 0f, levelMax = 0.1f),
         )
         assertEquals(1f, run(effects).at(0, 1_150).brightness, 0.0001f)
     }
@@ -382,7 +375,7 @@ class EffectEngineTest {
 
     @Test
     fun flicker_ignoresAttackAndHold_andSnapsOn() {
-        val slow = flashes(flicker = true).let { it.copy(flashes = it.flashes.copy(attackMs = 2_000, holdMs = 2_000)) }
+        val slow = flashes(flicker = true).let { it.withFlashes(it.flashes.copy(attackMs = 2_000, holdMs = 2_000)) }
         val run = run(slow)
         val out = Hsbk()
         // The first pulse starts at 1000: no attack, so it's straight into its hold, sent instantly.
@@ -433,7 +426,7 @@ class EffectEngineTest {
     @Test
     fun triggerFlash_startsABurstNow_andWaveBulbsFollowByTheirOffset() {
         val rare = flashes(spread = Spread.WAVE).let {
-            it.copy(flashes = it.flashes.copy(gapMinMs = 60_000, gapMaxMs = 60_000, waveOffsetMs = 300))
+            it.withFlashes(it.flashes.copy(gapMinMs = 60_000, gapMaxMs = 60_000, waveOffsetMs = 300))
         }
         val run = run(rare, bulbs = 2)
         run.flashKey(0, 500)
@@ -473,8 +466,7 @@ class EffectEngineTest {
 
     /* Spread */
 
-    private fun breathing(spread: Spread) = GroupEffects(
-        brightnessShift = BrightnessShiftSettings(
+    private fun breathing(spread: Spread) = GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
             enabled = true,
             spread = spread,
             waveOffsetMs = 300,
@@ -482,8 +474,7 @@ class EffectEngineTest {
             levelMax = 1f,
             speedMinMs = 1_000,
             speedMaxMs = 3_000,
-        ),
-    )
+        ))))
 
     @Test
     fun together_everyBulbMatches() {
@@ -518,7 +509,7 @@ class EffectEngineTest {
     @Test
     fun spreadIsPerLayer() {
         // Flashes together, brightness independent: every bulb flashes at once over different levels.
-        val effects = breathing(Spread.INDEPENDENT).copy(flashes = flashes().flashes)
+        val effects = breathing(Spread.INDEPENDENT).withFlashes(flashes().flashes)
         val run = run(effects, bulbs = 2)
         assertEquals(run.flashKey(0, 1_150), run.flashKey(1, 1_150))
         assertEquals(1f, run.at(1, 1_150).brightness, 0.0001f)

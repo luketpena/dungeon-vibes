@@ -23,7 +23,7 @@ class GroupEffectsTest {
 
     @Test
     fun brightnessShiftOrFlashes_areEffects() {
-        assertTrue(multiColor.copy(brightnessShift = BrightnessShiftSettings(enabled = true)).hasEffectLayers)
-        assertTrue(GroupEffects(flashes = FlashSettings(enabled = true)).hasEffectLayers)
+        assertTrue(multiColor.withBrightnessShift(BrightnessShiftSettings(enabled = true)).hasEffectLayers)
+        assertTrue(GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(enabled = true)))).hasEffectLayers)
     }
 }

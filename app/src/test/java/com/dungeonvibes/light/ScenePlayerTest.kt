@@ -13,6 +13,7 @@ import com.dungeonvibes.data.fx.FxItem
 import com.dungeonvibes.data.fx.FxRepository
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneLightEntity
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
@@ -81,9 +82,7 @@ class ScenePlayerTest : DatabaseTest() {
         return id
     }
 
-    private val breathing = GroupEffects(
-        brightnessShift = BrightnessShiftSettings(enabled = true, levelMin = 0.1f, levelMax = 0.9f, speedMinMs = 600, speedMaxMs = 600),
-    )
+    private val breathing = GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(enabled = true, levelMin = 0.1f, levelMax = 0.9f, speedMinMs = 600, speedMaxMs = 600))))
 
     @Test
     fun play_sceneWithEffects_fadesToItsBase_thenRunsThem(): Unit = runBlocking {

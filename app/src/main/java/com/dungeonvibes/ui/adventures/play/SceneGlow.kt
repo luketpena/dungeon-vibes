@@ -8,15 +8,17 @@ import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.InteractionSource
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.LocalRippleConfiguration
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -24,8 +26,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.interaction.PressInteraction
+import androidx.compose.material3.ripple
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.Immutable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.Stable
@@ -54,6 +56,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
@@ -343,9 +346,10 @@ val GlowCardShape: Shape = RoundedCornerShape(12.dp)
  * The app's dark card: scene tiles and adventures. Pass [glow] (from [rememberSceneGlowModifier] or
  * [rememberRoomGlowModifier], built with [GlowCardShape]) to light it up. With [squish] on it shrinks
  * while held, bounces back on release and ticks as the finger lands, instead of rippling.
- * [stateLabel] is what TalkBack reads as its state (e.g. "Active").
+ * [stateLabel] is what TalkBack reads as its state (e.g. "Active"). [onLongClick], if given, is a
+ * second action on a long press, with [onLongClickLabel] for TalkBack; [border] draws a rim.
  */
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun GlowCard(
     onClick: () -> Unit,
@@ -355,25 +359,40 @@ fun GlowCard(
     stateLabel: String? = null,
     containerColor: Color = MaterialTheme.colorScheme.surfaceContainerHigh,
     elevation: Dp = 1.dp,
+    border: BorderStroke? = null,
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     val interactionSource = remember { MutableInteractionSource() }
     val scale = rememberPressScale(interactionSource, enabled = squish) { haptics.performHapticFeedback(PressHaptic) }
-    CompositionLocalProvider(LocalRippleConfiguration provides if (squish) null else LocalRippleConfiguration.current) {
-        Card(
-            onClick = onClick,
-            modifier = modifier
-                .pressScale(scale)
-                .then(glow)
-                .semantics { if (stateLabel != null) stateDescription = stateLabel },
-            shape = GlowCardShape,
-            colors = CardDefaults.cardColors(
-                containerColor = containerColor,
-                contentColor = MaterialTheme.colorScheme.onSurface,
-            ),
-            elevation = CardDefaults.cardElevation(defaultElevation = elevation),
-            interactionSource = interactionSource,
+    Card(
+        modifier = modifier
+            .pressScale(scale)
+            .then(glow)
+            .semantics { if (stateLabel != null) stateDescription = stateLabel },
+        shape = GlowCardShape,
+        colors = CardDefaults.cardColors(
+            containerColor = containerColor,
+            contentColor = MaterialTheme.colorScheme.onSurface,
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = elevation),
+        border = border,
+    ) {
+        // Tap and long-press on the card's content, inside the card's clip, so the ripple (when
+        // not squishing) keeps to the rounded shape while the card's shadow and glow stay outside.
+        Column(
+            Modifier
+                .fillMaxWidth()
+                .combinedClickable(
+                    interactionSource = interactionSource,
+                    indication = if (squish) null else ripple(),
+                    role = Role.Button,
+                    onLongClickLabel = onLongClickLabel,
+                    onLongClick = onLongClick,
+                    onClick = onClick,
+                ),
             content = content,
         )
     }

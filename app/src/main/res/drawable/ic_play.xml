@@ -1,12 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Material "play_arrow", mirrored for right-to-left languages -->
+<!-- Lucide "play", stroke 2.5 (lucide.dev, ISC; see LICENSE-lucide.txt) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
-    android:autoMirrored="true"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M8,5v14l11,-7z" />
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M5 5 a2 2 0 0 1 3.008 -1.728 l11.997 6.998 a2 2 0 0 1 0.003 3.458 l-12 7 A2 2 0 0 1 5 19 z" />
 </vector>

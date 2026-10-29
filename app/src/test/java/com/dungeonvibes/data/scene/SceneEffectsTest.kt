@@ -28,12 +28,7 @@ class SceneEffectsTest : DatabaseTest() {
     private var lamp = 0L
     private var adventure = 0L
 
-    private val fire = GroupEffects(
-        colorShift = ColorShiftSettings(enabled = true, spread = Spread.INDEPENDENT, order = ColorOrder.RANDOM),
-        palette = listOf(FxColor.color(12f), FxColor.color(25f), FxColor.white(2_200)),
-        brightnessShift = BrightnessShiftSettings(enabled = true, mode = BrightnessMode.FLICKER, levelMin = 0.3f),
-        flashes = FlashSettings(enabled = false, attackMs = 10, pulsesMax = 3),
-    )
+    private val fire = GroupEffects(colorShift = ColorShiftSettings(enabled = true, spread = Spread.INDEPENDENT, order = ColorOrder.RANDOM), palette = listOf(FxColor.color(12f), FxColor.color(25f), FxColor.white(2_200)), layers = listOf(EffectLayer.flashes(FlashSettings(enabled = false, attackMs = 10, pulsesMax = 3)), EffectLayer.brightness(BrightnessShiftSettings(enabled = true, mode = BrightnessMode.FLICKER, levelMin = 0.3f))))
 
     @Before
     fun setUp(): Unit = runBlocking {

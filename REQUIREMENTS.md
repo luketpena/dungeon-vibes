@@ -151,6 +151,7 @@ The app has three top-level destinations: Adventures, Scenes, and Setup. Adventu
 • Tap opens the scene editor. A play button on each row applies the scene.
 4. Scene editor (shared by library and adventure scenes)
 • Name field and a fade-time control (labelled Fade in, inside an Introduction box with the intro FX; owner request, Oct 23, 2026). Default fade is 1.0 s; range 0 s–10 min in whole seconds (owner request, Oct 23, 2026; was 0–10 s).
+• Two sections, each with a header (owner request, Oct 28, 2026): Individual lights (a one-line hint and Add light; a dimmed "No individual lights." when there are none), then Light groups (no hint; All lights, then one row per group; "No groups yet" when there are none). Only one light or group is open at a time on the page.
 • One row per light slot: an on/off switch, a color swatch, and a name. Tapping the swatch expands a Color/White toggle. Color shows hue, saturation, and brightness sliders; White shows temperature (warm to cool) and brightness sliders, defaulting to 2700 K.
 • Live preview is on by default, with a toggle. While on, every change is sent to that slot's bulbs as described in Bulb control.
 • Adventure scenes also show "Reset to library version" (rule 4) and "Save to library" (rule 5).
@@ -160,7 +161,7 @@ The app has three top-level destinations: Adventures, Scenes, and Setup. Adventu
 6. Adventure (play view)
 • Scenes as large tiles in a grid, each showing its name and swatches. Tapping a tile applies the scene and marks it active.
 • The screen stays awake while this view is open.
-• An Edit toggle switches to edit mode: drag to reorder, duplicate, delete (with Undo), and open the editor. Tiles never apply in edit mode, to prevent mistakes at the table.
+• An Edit toggle switches to edit mode: drag to reorder, duplicate, delete (with Undo), and open the editor. Tiles never apply in edit mode, to prevent mistakes at the table. Outside edit mode, long-pressing a tile opens its scene editor directly (owner request, Oct 29, 2026).
 • "Add scene" offers "New blank scene" or "From library." The library picker allows selecting several scenes at once, each added as its own copy.
 Tablet layouts
 • Adventures: adventure list on the left, play view on the right.
@@ -213,8 +214,8 @@ Build in six phases. Each ends with automated tests passing and a short checklis
     [ ] Deleting a library scene keeps its copies, and their Reset button disappears.
     [ ] Tablet shows the two-pane layouts.
 Lights menu and default lighting (added after the MVP, owner request, Oct 22, 2026)
-• Default lighting: how a neutral room looks. It's a full scene (groups, All lights, effects), edited with the scene editor from Setup → Default. It's hidden from the library and can't be added to adventures or saved to the library. It starts as All lights in the default warm white.
-• Every screen's title bar has a lights menu (a bulb icon, filled while the lights are on) with two entries:
+• Default lighting: how a neutral room looks. It's a full scene (groups, All lights, effects), edited with the scene editor from Setup → Settings (the tab was called Default; renamed so other settings can join it, owner request, Oct 28, 2026). It's hidden from the library and can't be added to adventures or saved to the library. It starts as All lights in the default warm white.
+• Every screen's title bar has a lights menu (a bulb icon: a lit bulb while the lights are on, a crossed-out bulb while they're off) with two entries:
     – Turn off lights / Turn on lights. "Turn off lights" shows while any light is on and fades every assigned bulb off. "Turn on lights" shows only once the app has turned them off, and brings back whatever was showing (a scene, or the default lighting). With nothing showing before (fresh launch, or after an FX that ended in Lights off), it turns on to the default lighting.
     – Default lighting (a switch). On: the default lighting shows. Off: the scene that was showing before comes back; with none, the lights turn off.
     – Dimmer (owner request, Oct 23, 2026): a 5–100 % slider that scales the brightness of everything the app sends (scenes, effects, FX, preview) without changing any scene. Lit bulbs follow it at once; it's remembered between launches.

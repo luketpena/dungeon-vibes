@@ -8,6 +8,7 @@ import com.dungeonvibes.data.db.AdventureFxEntity
 import com.dungeonvibes.data.db.AppDatabase
 import com.dungeonvibes.data.db.BulbApplyTarget
 import com.dungeonvibes.data.db.EffectColorEntity
+import com.dungeonvibes.data.db.EffectLayerEntity
 import com.dungeonvibes.data.db.SceneEntity
 import com.dungeonvibes.data.db.SceneLightEffectsEntity
 import com.dungeonvibes.data.db.SceneLightEntity
@@ -26,6 +27,7 @@ data class DeletedScene(
     val lights: List<SceneLightEntity>,
     val effects: List<SceneLightEffectsEntity>,
     val colors: List<EffectColorEntity>,
+    val layers: List<EffectLayerEntity> = emptyList(),
     val copyIds: List<Long>,
     val fxIds: List<Long>,
 )
@@ -74,16 +76,18 @@ class SceneRepository @Inject constructor(
         lightDao.observeAdventureLights(adventureId)
 
     /** Effects of every library scene: scene id → slot id → effects. */
-    fun observeLibraryEffects(): Flow<Map<Long, Map<Long, GroupEffects>>> =
-        combine(effectsDao.observeLibraryEffects(), effectsDao.observeLibraryEffectColors()) { rows, colors ->
-            groupEffectsByScene(rows, colors)
-        }
+    fun observeLibraryEffects(): Flow<Map<Long, Map<Long, GroupEffects>>> = combine(
+        effectsDao.observeLibraryEffects(),
+        effectsDao.observeLibraryEffectColors(),
+        effectsDao.observeLibraryLayers(),
+    ) { rows, colors, layers -> groupEffectsByScene(rows, colors, layers) }
 
     /** Effects of every scene in one adventure: scene id → slot id → effects. */
     fun observeAdventureEffects(adventureId: Long): Flow<Map<Long, Map<Long, GroupEffects>>> = combine(
         effectsDao.observeAdventureEffects(adventureId),
         effectsDao.observeAdventureEffectColors(adventureId),
-    ) { rows, colors -> groupEffectsByScene(rows, colors) }
+        effectsDao.observeAdventureLayers(adventureId),
+    ) { rows, colors, layers -> groupEffectsByScene(rows, colors, layers) }
 
     suspend fun getScene(sceneId: Long): SceneEntity? = sceneDao.get(sceneId)
 
@@ -96,14 +100,17 @@ class SceneRepository @Inject constructor(
     /** Effect layers per slot id; slots without any effect settings are absent. */
     suspend fun getSceneEffects(sceneId: Long): Map<Long, GroupEffects> = db.withTransaction {
         val rows = effectsDao.getForScene(sceneId)
+        val layers = effectsDao.getLayersForScene(sceneId).layersBySlot()
         val count = rows.size
-        if (count == 0) return@withTransaction emptyMap()
+        if (count == 0 && layers.isEmpty()) return@withTransaction emptyMap()
         val palettes = effectsDao.getColorsForScene(sceneId).palettesBySlot()
-        val result = HashMap<Long, GroupEffects>(count * 2)
+        val result = HashMap<Long, GroupEffects>((count + layers.size) * 2)
         for (i in 0 until count) {
             val row = rows[i]
-            result[row.slotId] = row.toGroupEffects(palettes[row.slotId].orEmpty())
+            result[row.slotId] = row.toGroupEffects(palettes[row.slotId].orEmpty(), layers[row.slotId].orEmpty())
         }
+        // Groups with layers but no Multi-color row.
+        for ((slotId, list) in layers) if (slotId !in result) result[slotId] = GroupEffects(layers = list)
         result
     }
 
@@ -157,15 +164,22 @@ class SceneRepository @Inject constructor(
     }
 
     /**
-     * Saves one group's effect layers, replacing its palette. The group needs settings in this
+     * Saves one group's effects, replacing its palette and its layered effects (kept in the
+     * order given: the first is the top). At most [GroupEffects.MAX_LAYERS] layers are kept. The group needs settings in this
      * scene first (effects belong to them); returns false and saves nothing when it has none.
      * Palettes longer than [GroupEffects.MAX_PALETTE] are cut to that length.
      */
     suspend fun saveGroupEffects(sceneId: Long, slotId: Long, effects: GroupEffects): Boolean = db.withTransaction {
         if (!lightDao.exists(sceneId, slotId)) return@withTransaction false
-        effectsDao.upsert(
-            SceneLightEffectsEntity(sceneId, slotId, effects.colorShift, effects.brightnessShift, effects.flashes, effects.spin),
-        )
+        effectsDao.upsert(SceneLightEffectsEntity(sceneId, slotId, effects.colorShift))
+        effectsDao.deleteLayers(sceneId, slotId)
+        val layers = effects.layers
+        val layerCount = minOf(layers.size, GroupEffects.MAX_LAYERS)
+        if (layerCount > 0) {
+            val rows = ArrayList<EffectLayerEntity>(layerCount)
+            for (i in 0 until layerCount) rows.add(layerEntity(sceneId, slotId, i, layers[i]))
+            effectsDao.insertLayers(rows)
+        }
         effectsDao.deleteColors(sceneId, slotId)
         val palette = effects.palette
         val count = minOf(palette.size, GroupEffects.MAX_PALETTE)
@@ -183,6 +197,7 @@ class SceneRepository @Inject constructor(
      * individual light removed from a scene (it then follows its groups again).
      */
     suspend fun removeSceneLight(sceneId: Long, slotId: Long) = db.withTransaction {
+        effectsDao.deleteLayers(sceneId, slotId)
         effectsDao.deleteColors(sceneId, slotId)
         effectsDao.delete(sceneId, slotId)
         lightDao.delete(sceneId, slotId)
@@ -192,6 +207,7 @@ class SceneRepository @Inject constructor(
     /** Removes a group's effect layers and palette entirely. */
     suspend fun clearGroupEffects(sceneId: Long, slotId: Long) = db.withTransaction {
         effectsDao.delete(sceneId, slotId)
+        effectsDao.deleteLayers(sceneId, slotId)
         sceneDao.touch(sceneId, time.nowMillis())
     }
 
@@ -418,6 +434,9 @@ class SceneRepository @Inject constructor(
      */
     private suspend fun copyLightsAndEffects(fromSceneId: Long, toSceneId: Long) {
         lightDao.copyLights(fromSceneId = fromSceneId, toSceneId = toSceneId)
+        // Layers belong to light rows (not the Multi-color row), so they copy on their own.
+        val layers = effectsDao.getLayersForScene(fromSceneId)
+        if (layers.isNotEmpty()) effectsDao.insertLayers(layers.map { it.copy(id = 0, sceneId = toSceneId) })
         val effects = effectsDao.getForScene(fromSceneId)
         val effectCount = effects.size
         if (effectCount == 0) return
@@ -441,6 +460,7 @@ class SceneRepository @Inject constructor(
             lights = lightDao.getForScene(id),
             effects = effectsDao.getForScene(id),
             colors = effectsDao.getColorsForScene(id),
+            layers = effectsDao.getLayersForScene(id),
             copyIds = sceneDao.copiesOf(id),
             fxIds = db.fxDao().transitioningTo(id),
         )
@@ -471,6 +491,8 @@ class SceneRepository @Inject constructor(
             if (effects.isNotEmpty()) effectsDao.insertAll(effects)
             val colors = deleted.colors.filter { it.slotId in lit }
             if (colors.isNotEmpty()) effectsDao.insertColors(colors)
+            val layers = deleted.layers.filter { it.slotId in lit }
+            if (layers.isNotEmpty()) effectsDao.insertLayers(layers)
         }
         if (deleted.copyIds.isNotEmpty()) sceneDao.relinkCopies(deleted.copyIds, scene.id)
         if (deleted.fxIds.isNotEmpty()) db.fxDao().relinkTransitions(deleted.fxIds, scene.id)

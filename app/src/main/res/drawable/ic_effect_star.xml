@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The ✦ that marks effects inside swatches (same shape as Swatch.kt's starPath: four points
+     joined by inward curves, the curves at 16 % of the point distance from the center). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M12,2Q13.6,10.4 22,12Q13.6,13.6 12,22Q10.4,13.6 2,12Q10.4,10.4 12,2Z" />
+</vector>

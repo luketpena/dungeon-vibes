@@ -108,7 +108,7 @@ class SceneResolverTest {
     @Test
     fun effectGroups_ownerTakesTheLook_otherLitGroupsOnlyFlash() {
         val targets = resolveScene(setup(), lights(light(1, true, 0f), light(2, true, 120f)), false, room)
-        val storm = GroupEffects(flashes = FlashSettings(enabled = true))
+        val storm = GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(enabled = true))))
         val groups = effectGroupsFor(targets) { slotId -> if (slotId == 2L) storm else null }.associateBy { it.slotId }
 
         // Corner flashes B, which Surround owns: Surround runs too (no effects of its own) to carry B's look.

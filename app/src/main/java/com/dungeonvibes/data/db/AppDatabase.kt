@@ -19,13 +19,14 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         FxEntity::class,
         FxTargetEntity::class,
         AdventureFxEntity::class,
+        EffectLayerEntity::class,
     ],
-    version = 12,
+    version = 13,
     exportSchema = true,
     // Room writes each upgrade itself by comparing the exported schemas in app/schemas.
     // 1 → 2 adds the two effect tables; 2 → 3 adds the flash peak range's low end (default 100 %).
     // 3 → 4 is written by hand below (it also removes data).
-    // 5 → 6 adds the FX library tables. 6 → 7 through 11 → 12 are written by hand below.
+    // 5 → 6 adds the FX library tables. 6 → 7 through 12 → 13 are written by hand below.
     autoMigrations = [AutoMigration(from = 1, to = 2), AutoMigration(from = 2, to = 3), AutoMigration(from = 5, to = 6)],
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -213,6 +214,91 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * Layered effects (owner request): each group's Brightness shift, Flashes and Spin become
+         * rows of their own, so a group can stack several. Every effect that was on becomes a
+         * layer (Flashes on top, then Spin, then Brightness shift, which is how they mixed before);
+         * effects that were off are dropped (owner decision). The old columns are left in place
+         * (unused) rather than rebuilding a table the palettes refer to.
+         */
+        val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `scene_effect_layers` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `sceneId` INTEGER NOT NULL,
+                        `slotId` INTEGER NOT NULL,
+                        `position` INTEGER NOT NULL,
+                        `type` TEXT NOT NULL,
+                        `brightnessShift_enabled` INTEGER NOT NULL,
+                        `brightnessShift_spread` TEXT NOT NULL,
+                        `brightnessShift_waveOffsetMs` INTEGER NOT NULL,
+                        `brightnessShift_mode` TEXT NOT NULL,
+                        `brightnessShift_levelMin` REAL NOT NULL,
+                        `brightnessShift_levelMax` REAL NOT NULL,
+                        `brightnessShift_speedMinMs` INTEGER NOT NULL,
+                        `brightnessShift_speedMaxMs` INTEGER NOT NULL,
+                        `flashes_enabled` INTEGER NOT NULL,
+                        `flashes_spread` TEXT NOT NULL,
+                        `flashes_waveOffsetMs` INTEGER NOT NULL,
+                        `flashes_peak` REAL NOT NULL,
+                        `flashes_peakMin` REAL NOT NULL DEFAULT 1.0,
+                        `flashes_attackMs` INTEGER NOT NULL,
+                        `flashes_holdMs` INTEGER NOT NULL,
+                        `flashes_releaseMs` INTEGER NOT NULL,
+                        `flashes_gapMinMs` INTEGER NOT NULL,
+                        `flashes_gapMaxMs` INTEGER NOT NULL,
+                        `flashes_pulsesMin` INTEGER NOT NULL,
+                        `flashes_pulsesMax` INTEGER NOT NULL,
+                        `flashes_spacingMinMs` INTEGER NOT NULL,
+                        `flashes_spacingMaxMs` INTEGER NOT NULL,
+                        `flashes_color_mode` TEXT NOT NULL,
+                        `flashes_color_hue` REAL NOT NULL,
+                        `flashes_color_saturation` REAL NOT NULL,
+                        `flashes_color_kelvin` INTEGER NOT NULL,
+                        `flashes_color_brightness` REAL NOT NULL DEFAULT 1.0,
+                        `spin_enabled` INTEGER NOT NULL,
+                        `spin_level` REAL NOT NULL,
+                        `spin_attackMs` INTEGER NOT NULL,
+                        `spin_holdMs` INTEGER NOT NULL,
+                        `spin_releaseMs` INTEGER NOT NULL,
+                        `spin_stepMs` INTEGER NOT NULL,
+                        `spin_lapGapMs` INTEGER NOT NULL,
+                        `spin_color_mode` TEXT NOT NULL,
+                        `spin_color_hue` REAL NOT NULL,
+                        `spin_color_saturation` REAL NOT NULL,
+                        `spin_color_kelvin` INTEGER NOT NULL,
+                        `spin_color_brightness` REAL NOT NULL DEFAULT 1.0,
+                        `spin_reverse` INTEGER NOT NULL DEFAULT 0,
+                        FOREIGN KEY(`sceneId`, `slotId`) REFERENCES `scene_lights`(`sceneId`, `slotId`) ON UPDATE NO ACTION ON DELETE CASCADE
+                    )
+                    """.trimIndent(),
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_scene_effect_layers_sceneId_slotId` ON `scene_effect_layers` (`sceneId`, `slotId`)",
+                )
+                for ((position, type, flag) in LAYER_MIGRATION) {
+                    db.execSQL(
+                        "INSERT INTO scene_effect_layers (sceneId, slotId, position, type, $LAYER_COLUMNS) " +
+                            "SELECT sceneId, slotId, $position, '$type', $LAYER_COLUMNS FROM scene_light_effects WHERE $flag = 1",
+                    )
+                }
+                db.execSQL("UPDATE scene_light_effects SET brightnessShift_enabled = 0, flashes_enabled = 0, spin_enabled = 0")
+            }
+        }
+
+        /** Old effect → (priority, layer type, the column that said it was on). */
+        private val LAYER_MIGRATION = listOf(
+            Triple(0, "FLASHES", "flashes_enabled"),
+            Triple(1, "SPIN", "spin_enabled"),
+            Triple(2, "BRIGHTNESS_SHIFT", "brightnessShift_enabled"),
+        )
+
+        /** Every settings column a layer row shares with scene_light_effects. */
+        private const val LAYER_COLUMNS =
+            "`brightnessShift_enabled`, `brightnessShift_spread`, `brightnessShift_waveOffsetMs`, `brightnessShift_mode`, `brightnessShift_levelMin`, `brightnessShift_levelMax`, `brightnessShift_speedMinMs`, `brightnessShift_speedMaxMs`, `flashes_enabled`, `flashes_spread`, `flashes_waveOffsetMs`, `flashes_peak`, `flashes_peakMin`, `flashes_attackMs`, `flashes_holdMs`, `flashes_releaseMs`, `flashes_gapMinMs`, `flashes_gapMaxMs`, `flashes_pulsesMin`, `flashes_pulsesMax`, `flashes_spacingMinMs`, `flashes_spacingMaxMs`, `flashes_color_mode`, `flashes_color_hue`, `flashes_color_saturation`, `flashes_color_kelvin`, `flashes_color_brightness`, `spin_enabled`, `spin_level`, `spin_attackMs`, `spin_holdMs`, `spin_releaseMs`, `spin_stepMs`, `spin_lapGapMs`, `spin_color_mode`, `spin_color_hue`, `spin_color_saturation`, `spin_color_kelvin`, `spin_color_brightness`, `spin_reverse`"
+
         private fun addColumns(db: SupportSQLiteDatabase, table: String, vararg columns: String) {
             for (column in columns) db.execSQL("ALTER TABLE $table ADD COLUMN $column")
         }
@@ -228,6 +314,6 @@ abstract class AppDatabase : RoomDatabase() {
 
         /** Hand-written migrations, for every builder (the app's and the tests'). */
         val MIGRATIONS: Array<Migration> =
-            arrayOf(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12)
+            arrayOf(MIGRATION_3_4, MIGRATION_4_5, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13)
     }
 }

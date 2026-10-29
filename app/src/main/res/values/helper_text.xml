@@ -1,0 +1,118 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+    HELPER TEXT: every hint, description, empty-screen message, confirmation message and
+    screen-reader label in the app lives here, so it can be edited without touching code.
+    (Button names, titles and field labels stay in strings.xml.)
+
+    Editing tips:
+    - Change only the text between > and <. The name="..." is how the code finds it.
+    - Write an apostrophe as \'  (it\'s) and a double quote as \"
+    - %1$s / %1$d are filled in by the app (a name, a number); keep them in the text.
+    - A <plurals> entry has one line for 1 ("one") and one for everything else ("other").
+    - Android Studio picks up changes on the next build; no code changes needed.
+-->
+<resources>
+    <!-- ===== Everywhere: read aloud by screen readers (TalkBack) for icon buttons; never shown on screen ===== -->
+    <string name="action_reorder">Drag to reorder</string>
+    <string name="action_more">More options</string>
+    <string name="action_expand">Show settings</string>
+    <string name="action_collapse">Hide settings</string>
+    <string name="action_open_debug">Debug tools</string>
+
+    <!-- ===== Everywhere ===== -->
+    <string name="banner_not_on_wifi">Not on Wi-Fi. Connect to the same Wi-Fi as your bulbs to scan and control them.</string>
+    <string name="placeholder_adventures">Your adventures will live here.</string>
+    <string name="placeholder_scenes">Your scene library will live here.</string>
+    <string name="placeholder_coming_in_phase">Coming in phase %1$d.</string>
+
+    <!-- ===== Setup → Bulbs ===== -->
+    <string name="bulbs_empty_check_app">Set up your bulbs in the LIFX app first.</string>
+    <string name="bulbs_empty_check_wifi">Make sure this phone is on the same Wi-Fi as the bulbs.</string>
+    <string name="bulbs_empty_check_guest">Guest networks usually block devices from seeing each other; use your main network.</string>
+    <string name="bulbs_empty_pull">Pull down to scan again.</string>
+    <string name="permission_message">Dungeon Vibes talks to your bulbs directly over your Wi-Fi. Android needs your permission for the app to reach devices on your local network.</string>
+    <string name="bulb_groups_hint">A bulb can be in several groups. When more than one is lit, the highest in Setup → Groups wins it.</string>
+    <string name="bulb_groups_none">No groups yet. Add them in Setup → Groups.</string>
+    <string name="bulb_group_top">Wins this bulb when several of its groups are lit</string>
+    <string name="bulb_remove_message">It will come back on the next scan if it\'s still on your Wi-Fi. Removing is mainly for bulbs that no longer exist.</string>
+
+    <!-- ===== Setup → Groups ===== -->
+    <string name="slots_empty">No groups yet.</string>
+    <string name="slots_order_hint">When groups share a bulb, higher groups take priority. Drag to change the order.</string>
+    <string name="slot_name_hint">e.g. Ceiling, Left Lamp</string>
+    <string name="slot_no_bulbs">No bulbs assigned</string>
+    <string name="slot_no_bulbs_found">No bulbs yet. Scan for them on the Bulbs tab.</string>
+    <string name="slot_delete_unused">No scenes use this group.</string>
+    <plurals name="slot_delete_used">
+        <item quantity="one">%1$d scene uses this group. Its settings for this group will be removed.</item>
+        <item quantity="other">%1$d scenes use this group. Their settings for this group will be removed.</item>
+    </plurals>
+    <string name="group_bulbs_hint">Add the bulbs to define the group. A bulb can be in several groups at once.</string>
+    <string name="group_order_hint">Bulb order determines both priority and effect order (such as with Wave or Spin)</string>
+    <string name="group_add_none">Every bulb is already in this group.</string>
+    <string name="group_remove_bulb">Take %1$s out of this group</string>
+
+    <!-- ===== Setup → Settings ===== -->
+    <string name="default_lighting_hint">The default lighting configuration for your room. Toggle between the your active scenes and the room default via the light actions menu. (Accessible via the lightbulb button in the top menu bar.)</string>
+
+    <!-- ===== Library → Scenes ===== -->
+    <string name="scenes_empty">No scenes yet.</string>
+    <string name="scene_none_selected">Create a new scene or edit and existing scene.</string>
+    <string name="scene_missing">This scene has been deleted.</string>
+    <string name="scene_delete_message">Copies of this scene in your adventures will not be deleted. They will be unable to reset back to this template.</string>
+    <string name="scene_saved_to_library">Saved to your scene library</string>
+    <string name="scene_reset_message">This scene\'s name, fade and light settings will be replaced with the library scene\'s. Your changes to this copy will be lost.</string>
+    <string name="scene_no_slots">No groups yet. Add them in Setup → Groups.</string>
+
+    <!-- ===== Scene editor: lights ===== -->
+    <string name="scene_locked_by_all_lights">Locked by All lights</string>
+    <string name="scene_singles_hint">Single lights override group settings</string>
+    <string name="scene_singles_none">No individual lights.</string>
+    <string name="scene_singles_no_match">No bulbs match.</string>
+    <string name="scene_single_remove">Remove %1$s from this scene</string>
+    <string name="scene_intro_selected">Selected</string>
+
+    <!-- ===== Scene editor: effects ===== -->
+    <string name="fx_off_hint">Turn this group on to use effects.</string>
+    <string name="fx_color_shift_hint">Drifts through a palette of colors</string>
+    <string name="palette_brightness_locked">Brightness shared by every color. Tap to set each color on its own.</string>
+    <string name="palette_brightness_unlocked">Each color has its own brightness. Tap to share one brightness.</string>
+    <string name="fx_remove_color">Remove color</string>
+    <string name="fx_brightness_shift_hint">Breathes or flickers brightness within a range</string>
+    <string name="fx_flashes_hint">Occasional pulses of color</string>
+    <string name="fx_spin_hint">A color that steps through the group\'s bulbs in order</string>
+    <string name="fx_flash_now_hint">Unable to trigger FX without assigned groups or bulbs.</string>
+    <string name="fx_layer_remove_message">This effect and its settings go from this group.</string>
+
+    <!-- ===== Library → FX ===== -->
+    <string name="fx_empty">No FX yet. Build a flash, a flicker or a spell to fire during play.</string>
+    <string name="fx_none_selected">Pick an FX to edit it, or create a new one.</string>
+    <string name="fx_missing">This FX has been deleted.</string>
+    <string name="fx_delete_message">Scenes that end in it are not affected; it just leaves every FX board.</string>
+    <string name="fx_try_hint">Try it plays this FX on the bulbs, without its transition.</string>
+    <string name="fx_targets_none">Pick at least one group.</string>
+    <string name="fx_spin_order_hint">Spin goes through the targets in order: groups as listed, each group\'s bulbs in its order (Setup → Groups).</string>
+    <string name="fx_transition_no_scenes">Your scene library is empty.</string>
+
+    <!-- ===== Adventures and play ===== -->
+    <string name="adventures_empty">No adventures yet. Create one for each campaign or session, then fill it with scenes from your library or build new ones.</string>
+    <string name="adventure_none_selected">Pick an adventure to play it.</string>
+    <string name="adventure_missing">This adventure has been deleted.</string>
+    <plurals name="adventure_delete_message">
+        <item quantity="one">Its %1$d scene will be deleted too. Your scene library is unchanged.</item>
+        <item quantity="other">Its %1$d scenes will be deleted too. Your scene library is unchanged.</item>
+    </plurals>
+    <string name="play_empty">No scenes in this adventure yet. Tap Add scene to start.</string>
+    <string name="play_edit_hint">Editing: tap a scene to change it, long-press and drag to reorder. Scenes won\'t play while editing.</string>
+    <string name="play_library_empty">Your scene library is empty. Build scenes on the Scenes tab to reuse them here.</string>
+    <string name="play_delete_message">This only removes it from this adventure. Your library is unchanged.</string>
+    <string name="play_slot_failed">Some bulbs in this group didn\'t respond</string>
+    <string name="fx_board_empty">No FX yet. Build them under Scenes → FX.</string>
+    <string name="fx_board_star_hint">Star the FX this adventure uses to keep them up front.</string>
+    <string name="fx_board_return_hint">Play a scene first: some FX return to it.</string>
+    <string name="fx_favorite">Add %1$s to this adventure\'s favorites</string>
+    <string name="fx_unfavorite">Remove %1$s from this adventure\'s favorites</string>
+
+    <!-- ===== Notification while effects run with the screen off ===== -->
+    <string name="fx_notification_text">Your lights keep animating while the screen is off.</string>
+</resources>

@@ -1,10 +1,13 @@
 package com.dungeonvibes.data.db
 
+import com.dungeonvibes.data.scene.flashes
+import com.dungeonvibes.data.scene.spin
 import android.app.Application
 import android.database.sqlite.SQLiteDatabase
 import androidx.room.Room
 import com.dungeonvibes.data.TimeSource
 import com.dungeonvibes.data.fx.FxRepository
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
@@ -62,7 +65,7 @@ class MigrationTest {
 
                 // The new tables work.
                 assertTrue(scenes.getSceneEffects(1).isEmpty())
-                val effects = GroupEffects(flashes = FlashSettings(enabled = true))
+                val effects = GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(enabled = true))))
                 assertTrue(scenes.saveGroupEffects(1, 1, effects))
                 assertEquals(effects, scenes.getSceneEffects(1)[1])
             }
@@ -155,8 +158,8 @@ class MigrationTest {
                 val effects = SceneRepository(db, TimeSource { 2_000L }).getSceneEffects(1).getValue(1)
                 assertEquals(listOf(0.6f, 0.6f), effects.palette.map { it.brightness })
                 assertTrue(effects.colorShift.brightnessLocked)
-                // Flash colors use their peak; theirs is simply 100 %.
-                assertEquals(1f, effects.flashes.color.brightness, 0f)
+                // Its Flashes were off: since layered effects (version 13) those are dropped.
+                assertTrue(effects.layers.isEmpty())
             }
         } finally {
             db.close()
@@ -281,6 +284,57 @@ class MigrationTest {
                 assertEquals(1L, scenes.getScene(scene)!!.introFxId)
                 db.fxDao().delete(1)
                 assertNull(scenes.getScene(scene)!!.introFxId)
+            }
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun version12To13_effectsThatWereOnBecomeLayers_flashesOnTop() {
+        createDatabase(
+            10,
+            listOf(
+                "INSERT INTO light_slots (id, name, sortOrder, isRoom) VALUES (1, 'Ceiling', 0, 0)",
+                "INSERT INTO scenes (id, name, adventureId, parentSceneId, sortOrder, fadeMs, createdAt, updatedAt, allLightsOn, isDefault) " +
+                    "VALUES (1, 'Storm', NULL, NULL, 0, 1000, 1000, 1000, 0, 0)",
+                "INSERT INTO scene_lights VALUES (1, 1, 1, 'COLOR', 0.0, 1.0, 2700, 0.5)",
+                // Flashes and Spin on, Brightness shift and Multi-color off.
+                "INSERT INTO scene_light_effects (sceneId, slotId, colorShift_enabled, colorShift_spread, " +
+                    "colorShift_waveOffsetMs, colorShift_order, colorShift_blendMinMs, colorShift_blendMaxMs, " +
+                    "colorShift_holdMinMs, colorShift_holdMaxMs, colorShift_brightnessLocked, " +
+                    "brightnessShift_enabled, brightnessShift_spread, brightnessShift_waveOffsetMs, " +
+                    "brightnessShift_mode, brightnessShift_levelMin, brightnessShift_levelMax, " +
+                    "brightnessShift_speedMinMs, brightnessShift_speedMaxMs, flashes_enabled, flashes_spread, " +
+                    "flashes_waveOffsetMs, flashes_peak, flashes_peakMin, flashes_attackMs, flashes_holdMs, " +
+                    "flashes_releaseMs, flashes_gapMinMs, flashes_gapMaxMs, flashes_pulsesMin, " +
+                    "flashes_pulsesMax, flashes_spacingMinMs, flashes_spacingMaxMs, flashes_color_mode, " +
+                    "flashes_color_hue, flashes_color_saturation, flashes_color_kelvin, " +
+                    "flashes_color_brightness, spin_enabled, spin_level, spin_attackMs, spin_holdMs, " +
+                    "spin_releaseMs, spin_stepMs, spin_lapGapMs, spin_color_mode, spin_color_hue, " +
+                    "spin_color_saturation, spin_color_kelvin, spin_color_brightness) VALUES (1, 1, 0, " +
+                    "'TOGETHER', 1000, 'IN_SEQUENCE', 1000, 1000, 1000, 1000, 1000, 0, 'TOGETHER', 1000, " +
+                    "'SMOOTH', 0.5, 0.5, 1000, 1000, 1, 'TOGETHER', 1000, 0.5, 0.5, 70, 1000, 1000, 1000, " +
+                    "1000, 1, 1, 1000, 1000, 'COLOR', 0.5, 0.5, 1000, 0.5, 1, 0.5, 1000, 1000, 1000, 250, " +
+                    "1000, 'COLOR', 0.5, 0.5, 1000, 0.5)",
+            ),
+        )
+        val db = Room.databaseBuilder(context, AppDatabase::class.java, dbName)
+            .allowMainThreadQueries()
+            .addMigrations(*AppDatabase.MIGRATIONS)
+            .build()
+        try {
+            runBlocking {
+                val scenes = SceneRepository(db, TimeSource { 2_000L })
+                val layers = scenes.getSceneEffects(1).getValue(1).layers
+                assertEquals(listOf(EffectLayerType.FLASHES, EffectLayerType.SPIN), layers.map { it.type })
+                assertEquals(70, layers[0].flashes.attackMs)
+                assertEquals(250, layers[1].spin.stepMs)
+                // Copies carry the layers; deleting the light row takes them away.
+                val copy = scenes.duplicateScene(1)!!
+                assertEquals(2, scenes.getSceneEffects(copy).getValue(1).layers.size)
+                scenes.removeSceneLight(1, 1)
+                assertTrue(scenes.getSceneEffects(1).isEmpty())
             }
         } finally {
             db.close()

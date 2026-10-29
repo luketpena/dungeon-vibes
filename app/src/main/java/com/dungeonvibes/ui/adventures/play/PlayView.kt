@@ -1,6 +1,7 @@
 package com.dungeonvibes.ui.adventures.play
 
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -51,7 +52,6 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
@@ -237,6 +237,16 @@ fun PlayView(
                                         } else if (onLocalNetwork) {
                                             haptics.performHapticFeedback(SceneHaptic)
                                             viewModel.play(sceneId)
+                                        }
+                                    },
+                                    // Outside edit mode a long press opens the editor straight away
+                                    // (owner request); in edit mode it starts a drag instead.
+                                    onLongClick = if (editMode) {
+                                        null
+                                    } else {
+                                        {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            onOpenEditor(sceneId)
                                         }
                                     },
                                     onDuplicate = { viewModel.duplicateScene(sceneId) },
@@ -486,11 +496,11 @@ private fun GhostTile(
         onClick = onClick,
         modifier = Modifier
             .fillMaxWidth()
-            .heightIn(min = TILE_MIN_HEIGHT)
-            .alpha(if (!editMode && !canApply) 0.5f else 1f),
+            .heightIn(min = TILE_MIN_HEIGHT),
         // A dashed glowing outline: playing, but not one of this adventure's scenes.
         glow = glow,
-        squish = !editMode,
+        // Off Wi-Fi a tap can't play, so it doesn't squish as if it would.
+        squish = !editMode && canApply,
         stateLabel = stringResource(R.string.play_active),
     ) {
         Box(Modifier.fillMaxWidth().heightIn(min = TILE_MIN_HEIGHT)) {
@@ -532,8 +542,9 @@ private fun KeepScreenOn() {
 }
 
 /**
- * A scene tile: a dark card that, while its scene plays, glows with what the bulbs are being sent
- * ([glow]). It squishes under the finger (a light tick) except in edit mode.
+ * A scene tile: a dark card with a faint rim and a soft shadow that, while its scene plays, glows
+ * with what the bulbs are being sent ([glow], whose outline and light cover the rim and shadow).
+ * It squishes under the finger (a light tick) except in edit mode; [onLongClick] opens its editor.
  */
 @Composable
 private fun SceneTile(
@@ -545,22 +556,26 @@ private fun SceneTile(
     isDragging: Boolean,
     canApply: Boolean,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)?,
     onDuplicate: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val elevation by animateDpAsState(if (isDragging) 8.dp else 1.dp, label = "tileElevation")
-    val dimmed = !editMode && !canApply
+    val elevation by animateDpAsState(if (isDragging) TILE_DRAG_SHADOW else TILE_SHADOW, label = "tileElevation")
+    // Not dimmed off Wi-Fi (owner request, Oct 29): editing works without the bulbs. Only the
+    // tap-to-play waits for Wi-Fi, so it doesn't squish as if it would play.
     GlowCard(
         onClick = onClick,
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = TILE_MIN_HEIGHT)
-            .alpha(if (dimmed) 0.5f else 1f),
+            .heightIn(min = TILE_MIN_HEIGHT),
         glow = glow,
-        squish = !editMode,
+        squish = !editMode && canApply,
         stateLabel = if (isActive) stringResource(R.string.play_active) else null,
         elevation = elevation,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = TILE_RIM_ALPHA)),
+        onLongClick = onLongClick,
+        onLongClickLabel = stringResource(R.string.play_tile_edit),
     ) {
         Box(Modifier.fillMaxWidth().heightIn(min = TILE_MIN_HEIGHT)) {
             Column(Modifier.padding(12.dp)) {
@@ -605,6 +620,13 @@ private fun SceneTile(
         }
     }
 }
+
+/** A tile's resting shadow (soft, like the settings boxes) and its lift while dragged. */
+private val TILE_SHADOW = 3.dp
+private val TILE_DRAG_SHADOW = 8.dp
+
+/** A tile's rim: the text color at a whisper. The active glow's outline draws over it. */
+private const val TILE_RIM_ALPHA = 0.07f
 
 /** Tiles' minimum height (the card's), so the play mark sits in the card's bottom corner. */
 private val TILE_MIN_HEIGHT = 120.dp

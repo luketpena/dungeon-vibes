@@ -29,7 +29,7 @@ fun effectGroupsFor(targets: List<BulbApplyTarget>, effectsOf: (Long) -> GroupEf
         for (s in 0 until sourceCount) {
             val slotId = sources[s]
             val fx = effectsOf(slotId) ?: continue
-            if (!fx.flashes.enabled) continue
+            if (!fx.hasFlashes) continue
             val builder = builders.getOrPut(slotId) { GroupBuilder(slotId, fx) }
             builder.add(address, state, owned = false, order = target.positions[slotId] ?: (ROOM_RANK + i))
             flashed = true

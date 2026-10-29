@@ -1,5 +1,8 @@
 package com.dungeonvibes.ui.scenes.editor
 
+import com.dungeonvibes.data.scene.flashes
+import com.dungeonvibes.data.scene.brightnessShift
+import com.dungeonvibes.data.scene.withBrightnessShift
 import androidx.lifecycle.viewModelScope
 import com.dungeonvibes.data.DatabaseTest
 import com.dungeonvibes.data.adventure.AdventureRepository
@@ -8,6 +11,7 @@ import com.dungeonvibes.data.db.BrightnessShiftSettings
 import com.dungeonvibes.data.db.FlashSettings
 import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneLightEntity
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
 import com.dungeonvibes.data.slot.LightSlotRepository
@@ -256,15 +260,13 @@ class SceneEditorViewModelTest : DatabaseTest() {
 
     /* Effects */
 
-    private val breathing = GroupEffects(
-        brightnessShift = BrightnessShiftSettings(
+    private val breathing = GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
             enabled = true,
             levelMin = 0.1f,
             levelMax = 0.9f,
             speedMinMs = 600,
             speedMaxMs = 600,
-        ),
-    )
+        ))))
 
     private fun Fixture.effectFrames(serial: String) =
         fake.commands.value.filterIsInstance<Command.SetState>().filter { it.serial == serial && !it.reliable }
@@ -315,7 +317,7 @@ class SceneEditorViewModelTest : DatabaseTest() {
     fun turningEffectsOff_handsTheGroupBackToItsPlainSettings() = editorTest { f ->
         f.viewModel.setEffects(f.ceiling, breathing)
         delay(800)
-        f.viewModel.setEffects(f.ceiling, breathing.copy(brightnessShift = breathing.brightnessShift.copy(enabled = false)))
+        f.viewModel.setEffects(f.ceiling, breathing.copy(layers = emptyList()))
         delay(600)
 
         f.fake.clearLog()
@@ -327,9 +329,7 @@ class SceneEditorViewModelTest : DatabaseTest() {
 
     @Test
     fun flashNow_playsAFlashStraightAway() = editorTest { f ->
-        val rare = GroupEffects(
-            flashes = FlashSettings(enabled = true, gapMinMs = 60_000, gapMaxMs = 60_000, attackMs = 0, holdMs = 300, releaseMs = 0),
-        )
+        val rare = GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(enabled = true, gapMinMs = 60_000, gapMaxMs = 60_000, attackMs = 0, holdMs = 300, releaseMs = 0))))
         f.viewModel.setEffects(f.ceiling, rare)
         delay(600)
         f.fake.clearLog()

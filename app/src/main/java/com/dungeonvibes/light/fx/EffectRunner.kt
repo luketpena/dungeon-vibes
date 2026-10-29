@@ -118,7 +118,10 @@ class EffectRunner @Inject constructor(
     /* Messages to the running loop */
 
     private val pendingGroups = AtomicReference<List<EffectGroup>?>(null)
-    private val pendingFlashes = ConcurrentLinkedQueue<Long>()
+    /** "Flash now" requests: a group and its Flashes layer (null for all of them). */
+    private class FlashRequest(val slotId: Long, val layerId: Long?)
+
+    private val pendingFlashes = ConcurrentLinkedQueue<FlashRequest>()
     private val pendingFires = ConcurrentLinkedQueue<LiveFire>()
 
     /**
@@ -270,9 +273,12 @@ class EffectRunner @Inject constructor(
         runJob = scope.launch { run(emptyList(), 0, random, id) }
     }
 
-    /** Plays a burst now on [slotId]'s group, if it's running with Flashes (the editor's "Flash now"). */
-    fun triggerFlash(slotId: Long) {
-        pendingFlashes.add(slotId)
+    /**
+     * Plays a burst now on [slotId]'s Flashes layer [layerId] (all its Flashes layers when null),
+     * if it's running (the editor's "Flash now").
+     */
+    fun triggerFlash(slotId: Long, layerId: Long? = null) {
+        pendingFlashes.add(FlashRequest(slotId, layerId))
         wake.trySend(Unit)
     }
 
@@ -327,7 +333,7 @@ class EffectRunner @Inject constructor(
     private fun playable(groups: List<EffectGroup>): List<EffectGroup> {
         var flashed: HashSet<BulbAddress>? = null
         for (group in groups) {
-            if (group.flashOnly.isEmpty() || !group.effects.flashes.enabled) continue
+            if (group.flashOnly.isEmpty() || !group.effects.hasFlashes) continue
             val set = flashed ?: HashSet<BulbAddress>().also { flashed = it }
             set.addAll(group.flashOnly)
         }
@@ -336,7 +342,7 @@ class EffectRunner @Inject constructor(
             val bulbs = group.bulbs
             if (bulbs.isEmpty()) return@filter false
             val effects = group.effects
-            if (effects.flashes.enabled) return@filter true
+            if (effects.hasFlashes) return@filter true
             val owns = bulbs.any { it !in group.flashOnly }
             if (effects.hasAny && owns) return@filter true
             shared != null && bulbs.any { it in shared && it !in group.flashOnly }
@@ -485,8 +491,10 @@ class EffectRunner @Inject constructor(
                 tracks = flatten(states)
             }
             while (true) {
-                val slotId = pendingFlashes.poll() ?: break
-                for (state in states) if (state.group.slotId == slotId) state.run.triggerFlash(t - state.origin)
+                val request = pendingFlashes.poll() ?: break
+                for (state in states) {
+                    if (state.group.slotId == request.slotId) state.run.triggerFlash(t - state.origin, request.layerId)
+                }
             }
             while (true) {
                 val live = pendingFires.poll() ?: break
@@ -793,12 +801,12 @@ class EffectRunner @Inject constructor(
     /** Points each owned track at the other lit groups' flashes that also reach its bulb. */
     private fun linkFlashes(states: List<GroupState>, tracks: Array<BulbTrack>) {
         for (track in tracks) track.extraFlashes = NO_FLASHES
-        if (states.none { it.group.flashOnly.isNotEmpty() && it.group.effects.flashes.enabled }) return
+        if (states.none { it.group.flashOnly.isNotEmpty() && it.group.effects.hasFlashes }) return
         val byAddress = HashMap<String, BulbTrack>(tracks.size * 2)
         for (track in tracks) byAddress[keyOf(track.address)] = track
         for (state in states) {
             val group = state.group
-            if (group.flashOnly.isEmpty() || !group.effects.flashes.enabled) continue
+            if (group.flashOnly.isEmpty() || !group.effects.hasFlashes) continue
             val bulbs = group.bulbs
             val count = bulbs.size
             for (index in 0 until count) {

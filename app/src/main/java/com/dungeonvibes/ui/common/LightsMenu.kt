@@ -184,7 +184,7 @@ fun LightsMenuButton(
         Box(Modifier.offset(y = HALO_OFFSET_Y).size(HALO_SIZE).then(halo))
         IconButton(onClick = { open = true }) {
             Icon(
-                painterResource(if (lit) R.drawable.ic_lightbulb else R.drawable.ic_lightbulb_outline),
+                painterResource(if (lit) R.drawable.ic_lightbulb else R.drawable.ic_lightbulb_off),
                 contentDescription = stringResource(R.string.lights_menu),
                 tint = if (lit) Color.White else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = DARK_BULB_ALPHA),
             )
@@ -252,11 +252,7 @@ fun LightsMenuButton(
 private fun DimmerRow(level: Float, enabled: Boolean, onChange: (Float) -> Unit) {
     val percent = (level * 100f).roundToInt()
     Column(Modifier.padding(horizontal = 16.dp, vertical = 4.dp)) {
-        Text(
-            stringResource(R.string.lights_dimmer, percent),
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
+        FieldLabel(stringResource(R.string.lights_dimmer), stringResource(R.string.value_percent, percent), topPadding = 0.dp)
         SteadySlider(
             value = level,
             onValueChange = { value ->

@@ -32,6 +32,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -44,9 +45,11 @@ import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.SceneLightEntity
 import com.dungeonvibes.data.db.Spread
 import com.dungeonvibes.data.scene.GroupEffects
+import com.dungeonvibes.ui.common.FieldLabel
 import com.dungeonvibes.ui.common.GradientSlider
 import com.dungeonvibes.ui.common.LightColors
 import com.dungeonvibes.ui.common.SettingsCard
+import com.dungeonvibes.ui.common.SettingsCardGap
 import com.dungeonvibes.ui.common.SteadyRangeSlider
 import com.dungeonvibes.ui.common.SteadySlider
 import com.dungeonvibes.ui.common.Swatch
@@ -87,53 +90,54 @@ internal object FxRanges {
     val FLICKER_DEFAULT = 150 to 600
 }
 
-@Composable
-fun EffectsSection(
-    row: SlotRowState,
-    livePreview: Boolean,
-    onChange: (GroupEffects) -> Unit,
-    onFlashNow: () -> Unit,
-    modifier: Modifier = Modifier,
-) {
-    Column(modifier.padding(start = 16.dp, end = 16.dp, bottom = 16.dp)) {
-        Text(stringResource(R.string.fx_section), style = MaterialTheme.typography.titleSmall)
-        val light = row.light
-        if (light == null || !row.isOn) {
-            Text(
-                stringResource(R.string.fx_off_hint),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp),
-            )
-        } else {
-            val effects = row.effects ?: GroupEffects()
-            Spacer(Modifier.height(8.dp))
-            BrightnessShiftCard(effects, onChange)
-            Spacer(Modifier.height(8.dp))
-            FlashesCard(effects, onChange, canFlashNow = livePreview && row.hasBulbs, onFlashNow = onFlashNow)
-            Spacer(Modifier.height(8.dp))
-            SpinCard(effects, onChange)
-        }
-    }
-}
-
-/* Layer cards */
+/* Multi-color */
 
 /**
  * A group's Multi-color mode: the Color shift layer, shown in place of the single-color controls
  * (owner feedback: drifting through a palette is a way of coloring the group, not an add-on).
- * "Color" sets the palette's colors one at a time; "Behavior" sets how the group moves through it.
+ * "Color" sets the palette's colors one at a time; "Multi-color behavior" sets how the group moves
+ * through it.
  */
 @Composable
 internal fun MultiColorControls(effects: GroupEffects, onChange: (GroupEffects) -> Unit) {
     val settings = effects.colorShift
-    SettingsCard(stringResource(R.string.settings_color)) {
-        PaletteEditor(effects.palette, settings.brightnessLocked) { palette, locked ->
-            onChange(effects.copy(palette = palette, colorShift = settings.copy(brightnessLocked = locked)))
-        }
+    val palette = effects.palette
+    val locked = settings.brightnessLocked
+    val setPalette: (List<FxColor>, Boolean) -> Unit = { colors, lock ->
+        onChange(effects.copy(palette = colors, colorShift = settings.copy(brightnessLocked = lock)))
     }
-    Spacer(Modifier.height(8.dp))
-    SettingsCard(stringResource(R.string.settings_behavior)) {
+    // Which swatch is being edited; held here so the header's add and remove can use it.
+    var selected by rememberSaveable { mutableIntStateOf(0) }
+    val index = selected.coerceIn(0, (palette.size - 1).coerceAtLeast(0))
+    SettingsCard(
+        title = stringResource(R.string.settings_color),
+        icon = R.drawable.ic_card_color,
+        // Remove (the ringed color) then add, top right like Layered effects' +.
+        action = {
+            // Words rather than a bin icon: clearer about what goes (owner request).
+            TextButton(
+                onClick = {
+                    setPalette(palette.filterIndexed { i, _ -> i != index }, locked)
+                    selected = (index - 1).coerceAtLeast(0)
+                },
+                // Multi-color needs two colors.
+                enabled = palette.size > GroupEffects.MIN_PALETTE,
+            ) { Text(stringResource(R.string.fx_remove_color)) }
+            IconButton(
+                onClick = {
+                    setPalette(palette + neighbour(palette[index]), locked)
+                    selected = palette.size
+                },
+                enabled = palette.isNotEmpty() && palette.size < GroupEffects.MAX_PALETTE,
+            ) {
+                Icon(painterResource(R.drawable.ic_add), contentDescription = stringResource(R.string.fx_add_color))
+            }
+        },
+    ) {
+        PaletteEditor(palette, locked, index, onSelect = { selected = it }, onChange = setPalette)
+    }
+    Spacer(Modifier.height(SettingsCardGap))
+    SettingsCard(stringResource(R.string.settings_behavior), R.drawable.ic_card_behavior) {
         Choice(
             options = listOf(
                 ColorOrder.IN_SEQUENCE to R.string.fx_order_sequence,
@@ -155,162 +159,24 @@ internal fun MultiColorControls(effects: GroupEffects, onChange: (GroupEffects) 
     }
 }
 
-@Composable
-private fun BrightnessShiftCard(effects: GroupEffects, onChange: (GroupEffects) -> Unit) {
-    val settings = effects.brightnessShift
-    val flicker = settings.mode == BrightnessMode.FLICKER
-    LayerCard(
-        title = stringResource(R.string.fx_brightness_shift),
-        icon = R.drawable.ic_fx_brightness,
-        hint = stringResource(R.string.fx_brightness_shift_hint),
-        enabled = settings.enabled,
-        onEnabledChange = { onChange(effects.copy(brightnessShift = settings.copy(enabled = it))) },
-    ) {
-        Choice(
-            options = listOf(BrightnessMode.SMOOTH to R.string.fx_mode_smooth, BrightnessMode.FLICKER to R.string.fx_mode_flicker),
-            selected = settings.mode,
-            onSelect = { mode -> onChange(effects.copy(brightnessShift = settings.withMode(mode))) },
-        )
-        PercentRangeControl(R.string.fx_brightness_range, settings.levelMin, settings.levelMax) { lo, hi ->
-            onChange(effects.copy(brightnessShift = settings.copy(levelMin = lo, levelMax = hi)))
-        }
-        TimeRangeControl(
-            labelRes = if (flicker) R.string.fx_change_every else R.string.fx_cycle,
-            lowMs = settings.speedMinMs,
-            highMs = settings.speedMaxMs,
-            minMs = if (flicker) FxRanges.FLICKER_MIN else FxRanges.SMOOTH_MIN,
-            maxMs = if (flicker) FxRanges.FLICKER_MAX else FxRanges.SMOOTH_MAX,
-        ) { lo, hi -> onChange(effects.copy(brightnessShift = settings.copy(speedMinMs = lo, speedMaxMs = hi))) }
-        SpreadControl(settings.spread, settings.waveOffsetMs) { spread, offset ->
-            onChange(effects.copy(brightnessShift = settings.copy(spread = spread, waveOffsetMs = offset)))
-        }
-    }
-}
-
-@Composable
-private fun FlashesCard(
-    effects: GroupEffects,
-    onChange: (GroupEffects) -> Unit,
-    canFlashNow: Boolean,
-    onFlashNow: () -> Unit,
-) {
-    val settings = effects.flashes
-    LayerCard(
-        title = stringResource(R.string.fx_flashes),
-        icon = R.drawable.ic_fx_flash,
-        hint = stringResource(R.string.fx_flashes_hint),
-        enabled = settings.enabled,
-        onEnabledChange = { onChange(effects.copy(flashes = settings.copy(enabled = it))) },
-    ) {
-        // Single: one pulse per flash. Flicker: a quick stutter of 2–3, one bright and the rest faint.
-        Choice(
-            options = listOf(false to R.string.fx_flash_single, true to R.string.fx_mode_flicker),
-            selected = settings.flicker,
-            onSelect = { onChange(effects.copy(flashes = settings.withFlicker(it))) },
-        )
-        ControlLabel(stringResource(R.string.fx_flash_color))
-        FxColorControls(settings.color) { onChange(effects.copy(flashes = settings.copy(color = it))) }
-        PercentRangeControl(R.string.fx_peak, settings.peakMin, settings.peak) { lo, hi ->
-            onChange(effects.copy(flashes = settings.copy(peakMin = lo, peak = hi)))
-        }
-        // Flicker pulses snap on at a fixed speed: Attack and Hold only shape Single flashes.
-        if (settings.flicker) {
-            TimeControl(R.string.fx_release, settings.releaseMs, 0, FxRanges.ENVELOPE_MAX) {
-                onChange(effects.copy(flashes = settings.copy(releaseMs = it)))
-            }
-        } else {
-            AhrControl(
-                attackMs = settings.attackMs,
-                holdMs = settings.holdMs,
-                releaseMs = settings.releaseMs,
-                maxMs = FxRanges.ENVELOPE_MAX,
-                color = LightColors.displayColor(settings.color),
-                onChange = { a, h, r -> onChange(effects.copy(flashes = settings.copy(attackMs = a, holdMs = h, releaseMs = r))) },
-            )
-        }
-        TimeRangeControl(R.string.fx_gap, settings.gapMinMs, settings.gapMaxMs, FxRanges.GAP_MIN, FxRanges.GAP_MAX) { lo, hi ->
-            onChange(effects.copy(flashes = settings.copy(gapMinMs = lo, gapMaxMs = hi)))
-        }
-        SpreadControl(settings.spread, settings.waveOffsetMs) { spread, offset ->
-            onChange(effects.copy(flashes = settings.copy(spread = spread, waveOffsetMs = offset)))
-        }
-        Spacer(Modifier.height(8.dp))
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            OutlinedButton(onClick = onFlashNow, enabled = canFlashNow) { Text(stringResource(R.string.fx_flash_now)) }
-            if (!canFlashNow) {
-                Text(
-                    stringResource(R.string.fx_flash_now_hint),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(start = 12.dp),
-                )
-            }
-        }
-    }
-}
-
-/**
- * Spin: a color stepping through the group's bulbs in their order (Setup → Groups), lap after lap,
- * laid over whatever the group shows.
- */
-@Composable
-private fun SpinCard(effects: GroupEffects, onChange: (GroupEffects) -> Unit) {
-    val settings = effects.spin
-    LayerCard(
-        title = stringResource(R.string.fx_spin),
-        icon = R.drawable.ic_fx_spin,
-        hint = stringResource(R.string.fx_spin_hint),
-        enabled = settings.enabled,
-        onEnabledChange = { onChange(effects.copy(spin = settings.copy(enabled = it))) },
-    ) {
-        FxColorControls(settings.color) { onChange(effects.copy(spin = settings.copy(color = it))) }
-        ControlLabel(stringResource(R.string.fx_level, (settings.level * 100).roundToInt()))
-        SteadySlider(value = settings.level, onValueChange = { onChange(effects.copy(spin = settings.copy(level = snapPercent(it)))) })
-        TimeControl(R.string.fx_spin_step, settings.stepMs, FxRanges.SPIN_STEP_MIN, FxRanges.SPIN_STEP_MAX) {
-            onChange(effects.copy(spin = settings.copy(stepMs = it)))
-        }
-        TimeControl(R.string.fx_spin_gap, settings.lapGapMs, 0, FxRanges.SPIN_GAP_MAX) {
-            onChange(effects.copy(spin = settings.copy(lapGapMs = it)))
-        }
-        SpinDirectionControl(settings.reverse) { onChange(effects.copy(spin = settings.copy(reverse = it))) }
-        AhrControl(
-            attackMs = settings.attackMs,
-            holdMs = settings.holdMs,
-            releaseMs = settings.releaseMs,
-            maxMs = FxRanges.ENVELOPE_MAX,
-            color = LightColors.displayColor(settings.color),
-            onChange = { a, h, r -> onChange(effects.copy(spin = settings.copy(attackMs = a, holdMs = h, releaseMs = r))) },
-        )
-    }
-}
-
-/** A layer: title and on/off switch; its controls show only while it's on (settings are kept). */
-@Composable
-private fun LayerCard(
-    title: String,
-    hint: String,
-    icon: Int,
-    enabled: Boolean,
-    onEnabledChange: (Boolean) -> Unit,
-    content: @Composable ColumnScope.() -> Unit,
-) {
-    SettingsCard(title = title, hint = hint, enabled = enabled, onEnabledChange = onEnabledChange, icon = icon, content = content)
-}
-
 /* Palette and colors */
 
 /**
- * The palette: its swatches (tap one to edit it; + adds one), then the chosen color's hue,
- * saturation and brightness. Palette colors are always colors (no white mode); a white stored
+ * The palette: its swatches (tap one to edit it; the box's header adds and removes), then the
+ * chosen color's hue, saturation and brightness. Palette colors are always colors (no white mode); a white stored
  * before version 7 becomes a color when its hue or saturation is first moved. With the brightness
  * [locked], every color shares the brightness slider; locking snaps them all to the chosen one.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun PaletteEditor(palette: List<FxColor>, locked: Boolean, onChange: (List<FxColor>, Boolean) -> Unit) {
+private fun PaletteEditor(
+    palette: List<FxColor>,
+    locked: Boolean,
+    index: Int,
+    onSelect: (Int) -> Unit,
+    onChange: (List<FxColor>, Boolean) -> Unit,
+) {
     if (palette.isEmpty()) return
-    var selected by rememberSaveable { mutableIntStateOf(0) }
-    val index = selected.coerceIn(0, palette.lastIndex)
     val color = palette[index]
     val ring = MaterialTheme.colorScheme.primary
     FlowRow(
@@ -326,26 +192,13 @@ private fun PaletteEditor(palette: List<FxColor>, locked: Boolean, onChange: (Li
                 modifier = Modifier
                     .size(44.dp)
                     .then(if (chosen) Modifier.border(2.dp, ring, CircleShape) else Modifier)
-                    .clickable { selected = i },
+                    // Clipped first, so the tap ripple is a circle like the swatch, not a square.
+                    .clip(CircleShape)
+                    .clickable { onSelect(i) },
             ) {
                 Swatch(LightColors.displayColor(palette[i]), SwatchSize.ExtraLarge)
             }
         }
-        if (count < GroupEffects.MAX_PALETTE) {
-            IconButton(onClick = {
-                onChange(palette + neighbour(color), locked)
-                selected = count
-            }) {
-                Icon(painterResource(R.drawable.ic_add), contentDescription = stringResource(R.string.fx_add_color))
-            }
-        }
-    }
-    // Right under the swatches, so it reads as part of the palette (it removes the ringed one).
-    if (palette.size > GroupEffects.MIN_PALETTE) {
-        TextButton(onClick = {
-            onChange(palette.filterIndexed { i, _ -> i != index }, locked)
-            selected = (index - 1).coerceAtLeast(0)
-        }) { Text(stringResource(R.string.fx_remove_color)) }
     }
 
     fun update(changed: FxColor) {
@@ -354,12 +207,12 @@ private fun PaletteEditor(palette: List<FxColor>, locked: Boolean, onChange: (Li
         onChange(updated, locked)
     }
 
-    ControlLabel(stringResource(R.string.scene_hue))
+    FieldLabel(stringResource(R.string.scene_hue))
     GradientSlider(color.hue, { update(color.copy(mode = LightMode.COLOR, hue = it)) }, 0f..360f, LightColors.HueBrush)
-    ControlLabel(stringResource(R.string.scene_saturation))
+    FieldLabel(stringResource(R.string.scene_saturation))
     val saturationBrush = remember(color.hue) { LightColors.saturationBrush(color.hue) }
     GradientSlider(color.saturation, { update(color.copy(mode = LightMode.COLOR, saturation = it)) }, 0f..1f, saturationBrush)
-    ControlLabel(stringResource(R.string.scene_brightness))
+    FieldLabel(stringResource(R.string.scene_brightness))
     Row(verticalAlignment = Alignment.CenterVertically) {
         val brightnessBrush = remember(color.hue, color.saturation, color.mode, color.kelvin) {
             LightColors.brightnessBrush(LightColors.displayColor(color.copy(brightness = 1f)))
@@ -406,13 +259,13 @@ internal fun FxColorControls(color: FxColor, onChange: (FxColor) -> Unit) {
         },
     )
     if (color.mode == LightMode.COLOR) {
-        ControlLabel(stringResource(R.string.scene_hue))
+        FieldLabel(stringResource(R.string.scene_hue))
         GradientSlider(color.hue, { onChange(color.copy(hue = it)) }, 0f..360f, LightColors.HueBrush)
-        ControlLabel(stringResource(R.string.scene_saturation))
+        FieldLabel(stringResource(R.string.scene_saturation))
         val brush = remember(color.hue) { LightColors.saturationBrush(color.hue) }
         GradientSlider(color.saturation, { onChange(color.copy(saturation = it)) }, 0f..1f, brush)
     } else {
-        ControlLabel(stringResource(R.string.scene_temperature, color.kelvin))
+        FieldLabel(stringResource(R.string.scene_temperature), stringResource(R.string.value_kelvin, color.kelvin))
         GradientSlider(
             value = color.kelvin.toFloat(),
             onValueChange = { onChange(color.copy(kelvin = it.roundToInt())) },
@@ -440,7 +293,7 @@ private fun neighbour(color: FxColor): FxColor = FxColor.color(
 )
 
 /** Switching mode swaps in that mode's speed defaults: a 3 s cycle makes a poor flicker and vice versa. */
-private fun BrightnessShiftSettings.withMode(mode: BrightnessMode): BrightnessShiftSettings {
+internal fun BrightnessShiftSettings.withMode(mode: BrightnessMode): BrightnessShiftSettings {
     if (mode == this.mode) return this
     val (lo, hi) = if (mode == BrightnessMode.FLICKER) FxRanges.FLICKER_DEFAULT else FxRanges.SMOOTH_DEFAULT
     return copy(mode = mode, speedMinMs = lo, speedMaxMs = hi)
@@ -449,8 +302,9 @@ private fun BrightnessShiftSettings.withMode(mode: BrightnessMode): BrightnessSh
 /* Generic controls */
 
 @Composable
-internal fun SpreadControl(spread: Spread, waveOffsetMs: Int, onChange: (Spread, Int) -> Unit) {
-    ControlLabel(stringResource(R.string.fx_spread))
+internal fun SpreadControl(spread: Spread, waveOffsetMs: Int, showLabel: Boolean = true, onChange: (Spread, Int) -> Unit) {
+    // A box titled Spread already names it.
+    if (showLabel) FieldLabel(stringResource(R.string.fx_spread))
     Choice(
         options = listOf(
             Spread.TOGETHER to R.string.fx_spread_together,
@@ -468,7 +322,7 @@ internal fun SpreadControl(spread: Spread, waveOffsetMs: Int, onChange: (Spread,
 /** Spin's direction: through the bulbs in their order, or backwards (owner request). */
 @Composable
 internal fun SpinDirectionControl(reverse: Boolean, onChange: (Boolean) -> Unit) {
-    ControlLabel(stringResource(R.string.fx_spin_direction))
+    FieldLabel(stringResource(R.string.fx_spin_direction))
     Choice(
         options = listOf(false to R.string.fx_spin_forward, true to R.string.fx_spin_reverse),
         selected = reverse,
@@ -486,6 +340,8 @@ internal fun <T> Choice(options: List<Pair<T, Int>>, selected: T, onSelect: (T) 
                 selected = value == selected,
                 onClick = { onSelect(value) },
                 shape = SegmentedButtonDefaults.itemShape(index = i, count = count),
+                // No check mark on the selected segment: it pushes the label aside (owner request).
+                icon = {},
             ) { Text(stringResource(label)) }
         }
     }
@@ -501,7 +357,7 @@ internal fun TimeControl(
     enabled: Boolean = true,
     onChange: (Int) -> Unit,
 ) {
-    ControlLabel(stringResource(labelRes, formatDuration(valueMs)))
+    FieldLabel(stringResource(labelRes), formatDuration(valueMs))
     SteadySlider(
         value = timeToPosition(valueMs, minMs, maxMs),
         onValueChange = { onChange(positionToTime(it, minMs, maxMs)) },
@@ -519,8 +375,8 @@ internal fun TimeRangeControl(
     maxMs: Int,
     onChange: (Int, Int) -> Unit,
 ) {
-    val text = if (lowMs == highMs) formatDuration(lowMs) else formatDuration(lowMs) + " – " + formatDuration(highMs)
-    ControlLabel(stringResource(labelRes, text))
+    val text = if (lowMs == highMs) formatDuration(lowMs) else stringResource(R.string.value_range, formatDuration(lowMs), formatDuration(highMs))
+    FieldLabel(stringResource(labelRes), text)
     SteadyRangeSlider(
         value = timeToPosition(lowMs, minMs, maxMs)..timeToPosition(highMs, minMs, maxMs),
         onValueChange = { onChange(positionToTime(it.start, minMs, maxMs), positionToTime(it.endInclusive, minMs, maxMs)) },
@@ -529,7 +385,14 @@ internal fun TimeRangeControl(
 
 @Composable
 internal fun PercentRangeControl(labelRes: Int, low: Float, high: Float, onChange: (Float, Float) -> Unit) {
-    ControlLabel(stringResource(labelRes, (low * 100).roundToInt(), (high * 100).roundToInt()))
+    val lowPercent = (low * 100).roundToInt()
+    val highPercent = (high * 100).roundToInt()
+    val text = if (lowPercent == highPercent) {
+        stringResource(R.string.value_percent, lowPercent)
+    } else {
+        stringResource(R.string.value_percent_range, lowPercent, highPercent)
+    }
+    FieldLabel(stringResource(labelRes), text)
     SteadyRangeSlider(
         value = low..high,
         onValueChange = { onChange(snapPercent(it.start), snapPercent(it.endInclusive)) },
@@ -538,7 +401,7 @@ internal fun PercentRangeControl(labelRes: Int, low: Float, high: Float, onChang
 
 @Composable
 internal fun CountRangeControl(labelRes: Int, low: Int, high: Int, min: Int, max: Int, onChange: (Int, Int) -> Unit) {
-    ControlLabel(stringResource(labelRes, if (low == high) "$low" else "$low – $high"))
+    FieldLabel(stringResource(labelRes), if (low == high) "$low" else stringResource(R.string.value_range, "$low", "$high"))
     SteadyRangeSlider(
         value = low.toFloat()..high.toFloat(),
         onValueChange = { onChange(it.start.roundToInt(), it.endInclusive.roundToInt()) },
@@ -550,22 +413,12 @@ internal fun CountRangeControl(labelRes: Int, low: Int, high: Int, min: Int, max
 /** One whole number on a stepped slider. */
 @Composable
 internal fun CountControl(labelRes: Int, value: Int, min: Int, max: Int, onChange: (Int) -> Unit) {
-    ControlLabel(stringResource(labelRes, value))
+    FieldLabel(stringResource(labelRes), value.toString())
     SteadySlider(
         value = value.coerceIn(min, max).toFloat(),
         onValueChange = { onChange(it.roundToInt()) },
         valueRange = min.toFloat()..max.toFloat(),
         steps = max - min - 1,
-    )
-}
-
-@Composable
-internal fun ControlLabel(text: String) {
-    Text(
-        text,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.padding(top = 8.dp),
     )
 }
 

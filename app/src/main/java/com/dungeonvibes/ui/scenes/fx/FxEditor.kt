@@ -32,6 +32,8 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.dungeonvibes.ui.common.FieldLabel
+import com.dungeonvibes.ui.common.SettingsCardGap
 import com.dungeonvibes.ui.common.snapPercent
 import com.dungeonvibes.R
 import com.dungeonvibes.data.db.FlickerSettings
@@ -55,7 +57,6 @@ import com.dungeonvibes.ui.common.SteadySlider
 import com.dungeonvibes.ui.common.TopLevelScreen
 import com.dungeonvibes.ui.scenes.editor.AhrControl
 import com.dungeonvibes.ui.scenes.editor.Choice
-import com.dungeonvibes.ui.scenes.editor.ControlLabel
 import com.dungeonvibes.ui.scenes.editor.CountControl
 import com.dungeonvibes.ui.scenes.editor.CountRangeControl
 import com.dungeonvibes.ui.scenes.editor.FxColorControls
@@ -129,7 +130,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
         LazyColumn(
             modifier = modifier.fillMaxSize(),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 96.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp),
+            verticalArrangement = Arrangement.spacedBy(SettingsCardGap),
         ) {
             item(key = "name") {
                 Column {
@@ -164,7 +165,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
             // A Flicker has no color of its own: it dims what's there.
             if (fx.primitive != FxPrimitive.FLICKER) {
                 item(key = "color") {
-                    SettingsCard(stringResource(R.string.settings_color)) {
+                    SettingsCard(stringResource(R.string.settings_color), R.drawable.ic_card_color) {
                         when (fx.primitive) {
                             FxPrimitive.PULSE -> PulseColorControls(fx.pulse) { pulse -> viewModel.edit { it.copy(pulse = pulse) } }
                             FxPrimitive.STROBE -> {
@@ -181,7 +182,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
                 }
             }
             item(key = "timing") {
-                SettingsCard(stringResource(R.string.fx_card_timing)) {
+                SettingsCard(stringResource(R.string.fx_card_timing), R.drawable.ic_card_timing) {
                     when (fx.primitive) {
                         FxPrimitive.PULSE -> PulseTimingControls(fx.pulse) { pulse -> viewModel.edit { it.copy(pulse = pulse) } }
                         FxPrimitive.FLICKER -> FlickerControls(fx.flicker) { flicker -> viewModel.edit { it.copy(flicker = flicker) } }
@@ -191,7 +192,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
                 }
             }
             item(key = "targets") {
-                SettingsCard(stringResource(R.string.fx_targets)) {
+                SettingsCard(stringResource(R.string.fx_targets), R.drawable.ic_card_targets) {
                     TargetControls(
                         item = item,
                         groups = state.groups,
@@ -214,7 +215,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
                 }
             }
             item(key = "transition") {
-                SettingsCard(stringResource(R.string.fx_card_transition)) {
+                SettingsCard(stringResource(R.string.fx_card_transition), R.drawable.ic_card_then) {
                     TransitionControls(fx, state.libraryScenes) { change -> viewModel.edit(change) }
                 }
             }
@@ -227,7 +228,7 @@ fun FxEditor(fxId: Long, showBack: Boolean, onBack: () -> Unit) {
 @Composable
 private fun PulseColorControls(pulse: PulseSettings, onChange: (PulseSettings) -> Unit) {
     FxColorControls(pulse.color) { onChange(pulse.copy(color = it)) }
-    ControlLabel(stringResource(R.string.fx_channels))
+    FieldLabel(stringResource(R.string.fx_channels))
     // At least one channel stays on, or the pulse would do nothing.
     val onCount = listOf(pulse.affectsColor, pulse.affectsSaturation, pulse.affectsBrightness).count { it }
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -279,7 +280,7 @@ private fun FlickerControls(flicker: FlickerSettings, onChange: (FlickerSettings
     TimeControl(R.string.fx_duration, flicker.durationMs, FxEditorRanges.DURATION_MIN, FxEditorRanges.DURATION_MAX) {
         onChange(flicker.copy(durationMs = it))
     }
-    ControlLabel(stringResource(R.string.fx_depth, (flicker.depth * 100).roundToInt()))
+    FieldLabel(stringResource(R.string.fx_depth), stringResource(R.string.value_percent, (flicker.depth * 100).roundToInt()))
     SteadySlider(
         value = flicker.depth,
         onValueChange = { onChange(flicker.copy(depth = snapPercent(it))) },
@@ -297,7 +298,7 @@ private fun FlickerControls(flicker: FlickerSettings, onChange: (FlickerSettings
 @Composable
 private fun StrobeTimingControls(strobe: StrobeSettings, onChange: (StrobeSettings) -> Unit) {
     val rate = strobe.flashesPerSecond.coerceIn(StrobeShot.MIN_FLASHES_PER_SECOND, StrobeShot.MAX_FLASHES_PER_SECOND)
-    ControlLabel(stringResource(R.string.fx_strobe_rate, String.format(Locale.getDefault(), "%.1f", rate)))
+    FieldLabel(stringResource(R.string.fx_strobe_rate), String.format(Locale.getDefault(), "%.1f", rate))
     SteadySlider(
         value = rate,
         onValueChange = { onChange(strobe.copy(flashesPerSecond = (it * 2f).roundToInt() / 2f)) },
@@ -328,7 +329,7 @@ private fun SpinTimingControls(spin: SpinFxSettings, onChange: (SpinFxSettings) 
 /** A brightness level (0–100 % in 5 % steps). */
 @Composable
 internal fun LevelControl(level: Float, onChange: (Float) -> Unit) {
-    ControlLabel(stringResource(R.string.fx_level, (level * 100).roundToInt()))
+    FieldLabel(stringResource(R.string.fx_level), stringResource(R.string.value_percent, (level * 100).roundToInt()))
     SteadySlider(value = level, onValueChange = { onChange(snapPercent(it)) })
 }
 
@@ -387,7 +388,7 @@ private fun TransitionControls(fx: FxEntity, library: List<SceneEntity>, onChang
         )
         return
     }
-    ControlLabel(stringResource(R.string.fx_transition_pick))
+    FieldLabel(stringResource(R.string.fx_transition_pick))
     for (scene in library) {
         val selected = scene.id == fx.transitionSceneId
         Row(

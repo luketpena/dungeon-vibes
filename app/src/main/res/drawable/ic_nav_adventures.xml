@@ -1,11 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Map glyph (Material "map") -->
+<!-- Lucide "playing-cards-fan", stroke 2.5 (lucide.dev, ISC; see LICENSE-lucide.txt) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="24dp"
     android:height="24dp"
     android:viewportWidth="24"
     android:viewportHeight="24">
     <path
-        android:fillColor="#FF000000"
-        android:pathData="M20.5,3l-0.16,0.03L15,5.1 9,3 3.36,4.9c-0.21,0.07 -0.36,0.25 -0.36,0.48V20.5c0,0.28 0.22,0.5 0.5,0.5l0.16,-0.03L9,18.9l6,2.1 5.64,-1.9c0.21,-0.07 0.36,-0.25 0.36,-0.48V3.5c0,-0.28 -0.22,-0.5 -0.5,-0.5zM15,19l-6,-2.11V5l6,2.11V19z" />
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M12.65 7.65 a2 2 0 0 1 2.629 -1.046 l5.51 2.374 a2 2 0 0 1 1.046 2.628 l-3.957 9.184 a2 2 0 0 1 -2.628 1.046 l-5.51 -2.374 a2 2 0 0 1 -1.046 -2.628 z" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="M18 7.777 V4 a2 2 0 0 0 -2 -2 h-6 a2 2 0 0 0 -2 2 v10 a2 2 0 0 0 1.137 1.805" />
+    <path
+        android:strokeColor="#FF000000"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:pathData="m8 4.389 l-4.364 0.809 a2 2 0 0 0 -1.602 2.33 l1.822 9.833 a2 2 0 0 0 2.331 1.602 l2.542 -0.47" />
 </vector>

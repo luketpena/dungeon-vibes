@@ -47,11 +47,7 @@ class UndoAndDuplicateTest : DatabaseTest() {
     private fun light(sceneId: Long, slotId: Long, hue: Float) =
         SceneLightEntity(sceneId, slotId, true, LightMode.COLOR, hue, 1f, 2700, 0.5f)
 
-    private val effects = GroupEffects(
-        colorShift = ColorShiftSettings(enabled = true),
-        flashes = FlashSettings(enabled = true),
-        palette = listOf(FxColor.color(10f), FxColor.color(200f)),
-    )
+    private val effects = GroupEffects(colorShift = ColorShiftSettings(enabled = true), palette = listOf(FxColor.color(10f), FxColor.color(200f)), layers = listOf(EffectLayer.flashes(FlashSettings(enabled = true))))
 
     /** A library scene with two lit groups, effects on the ceiling. */
     private suspend fun richScene(name: String): Long {
@@ -265,5 +261,29 @@ class UndoAndDuplicateTest : DatabaseTest() {
 
         fx.restore(deleted)
         assertEquals(heal, scenes.getScene(scene)!!.introFxId)
+    }
+
+    /* Layered effects (database version 13) */
+
+    @Test
+    fun layers_saveInPriorityOrder_withSeveralOfOneKind(): Unit = runBlocking {
+        val scene = scenes.createLibraryScene("Storm")
+        scenes.saveSceneLight(light(scene, ceiling, 0f))
+        val layered = GroupEffects(
+            layers = listOf(
+                EffectLayer.spin(com.dungeonvibes.data.db.SpinSettings(stepMs = 200)),
+                EffectLayer.flashes(FlashSettings(attackMs = 10)),
+                EffectLayer.spin(com.dungeonvibes.data.db.SpinSettings(stepMs = 900, reverse = true)),
+            ),
+        )
+        assertTrue(scenes.saveGroupEffects(scene, ceiling, layered))
+
+        val saved = scenes.getSceneEffects(scene).getValue(ceiling)
+        assertEquals(layered, saved)
+        assertTrue(saved.layers.all { it.id > 0 })
+        // Reordered and saved again: the new order sticks.
+        val reordered = saved.copy(layers = saved.layers.reversed())
+        assertTrue(scenes.saveGroupEffects(scene, ceiling, reordered))
+        assertEquals(listOf(900, 0, 200).map { it }, scenes.getSceneEffects(scene).getValue(ceiling).layers.map { if (it.type == com.dungeonvibes.data.db.EffectLayerType.SPIN) it.spin.stepMs else 0 })
     }
 }

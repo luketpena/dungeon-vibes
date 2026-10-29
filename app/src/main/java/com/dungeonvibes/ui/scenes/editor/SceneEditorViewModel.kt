@@ -9,6 +9,8 @@ import com.dungeonvibes.data.db.LightMode
 import com.dungeonvibes.data.db.LightSlotEntity
 import com.dungeonvibes.data.db.SceneEntity
 import com.dungeonvibes.data.db.SceneLightEntity
+import com.dungeonvibes.data.db.EffectLayerType
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.data.scene.SceneRepository
 import com.dungeonvibes.data.scene.SceneSetup
@@ -446,15 +448,53 @@ class SceneEditorViewModel @AssistedInject constructor(
         setEffects(slotId, effects.copy(colorShift = effects.colorShift.copy(enabled = on), palette = palette))
     }
 
-    /** Plays a burst now on a group whose Flashes are previewing, so its shape can be judged. */
-    fun flashNow(slotId: Long) {
+    /** Ids for layers added while editing (negative, so they never clash with saved rows). */
+    private var nextLayerId = -1L
+
+    /**
+     * Adds a layered effect of [type] with default settings at the bottom of [slotId]'s list (the
+     * lowest priority) and returns its id, for opening its editor; null when the group has no
+     * settings yet or already has [GroupEffects.MAX_LAYERS] layers.
+     */
+    fun addLayer(slotId: Long, type: EffectLayerType): Long? {
+        val current = draft.value ?: return null
+        if (!current.lights.containsKey(slotId)) return null
+        val effects = current.effects[slotId] ?: GroupEffects()
+        if (effects.layers.size >= GroupEffects.MAX_LAYERS) return null
+        val id = nextLayerId--
+        setEffects(slotId, effects.copy(layers = effects.layers + EffectLayer(id, type)))
+        return id
+    }
+
+    /** Replaces one layer's settings. */
+    fun updateLayer(slotId: Long, layer: EffectLayer) {
+        val effects = draft.value?.effects?.get(slotId) ?: return
+        setEffects(slotId, effects.copy(layers = effects.layers.map { if (it.id == layer.id) layer else it }))
+    }
+
+    fun removeLayer(slotId: Long, layerId: Long) {
+        val effects = draft.value?.effects?.get(slotId) ?: return
+        setEffects(slotId, effects.copy(layers = effects.layers.filter { it.id != layerId }))
+    }
+
+    /** Persists a drag: [orderedIds] top (highest priority) first. */
+    fun reorderLayers(slotId: Long, orderedIds: List<Long>) {
+        val effects = draft.value?.effects?.get(slotId) ?: return
+        val byId = effects.layers.associateBy { it.id }
+        val ordered = orderedIds.mapNotNull { byId[it] }
+        if (ordered.size != effects.layers.size) return
+        setEffects(slotId, effects.copy(layers = ordered))
+    }
+
+    /** Plays a burst now on a Flashes layer that's previewing, so its shape can be judged. */
+    fun flashNow(slotId: Long, layerId: Long? = null) {
         if (!livePreview.value || slotId !in runnerSlots) return
         // A pending push may be about to restart the group; let it land first.
         if (runnerPushJob?.isActive == true) {
             runnerPushJob?.cancel()
             pendingGroups?.let(::pushRunner)
         }
-        effectRunner.triggerFlash(slotId)
+        effectRunner.triggerFlash(slotId, layerId)
     }
 
     /* Live preview */

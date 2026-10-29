@@ -24,6 +24,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.lifecycle.viewmodel.compose.hiltViewModel
 import androidx.lifecycle.ViewModel
@@ -95,6 +96,7 @@ internal fun IntroductionCard(
 ) {
     SettingsCard(
         title = stringResource(R.string.scene_intro),
+        icon = R.drawable.ic_card_intro,
         modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
     ) {
         FadeControl(fadeMs, onFadeChange)
@@ -117,14 +119,21 @@ private fun IntroFxRow(sceneId: Long) {
             .clickable { picking = true }
             .padding(vertical = 8.dp),
     ) {
-        Column(Modifier.weight(1f)) {
-            Text(stringResource(R.string.scene_intro_fx), style = MaterialTheme.typography.bodyLarge)
-            Text(
-                intro?.fx?.name ?: stringResource(R.string.scene_intro_none),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-        }
+        // Labelled like every other control: what it is (muted), then what's picked (bright).
+        Text(
+            stringResource(R.string.scene_intro_fx),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            intro?.fx?.name ?: stringResource(R.string.scene_intro_none),
+            style = MaterialTheme.typography.labelLarge,
+            color = MaterialTheme.colorScheme.onSurface,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 8.dp),
+        )
         if (intro != null) {
             Swatch(fxSwatchColor(intro.fx), SwatchSize.Large)
             Spacer(Modifier.width(8.dp))

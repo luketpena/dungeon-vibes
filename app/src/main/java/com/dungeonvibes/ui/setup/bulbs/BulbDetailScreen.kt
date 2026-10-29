@@ -122,7 +122,7 @@ fun BulbDetailScreen(bulbId: Long, onBack: () -> Unit) {
             item(key = "divider") { HorizontalDivider(Modifier.padding(top = 8.dp)) }
             item(key = "groups-heading") {
                 Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 4.dp)) {
-                    Text(stringResource(R.string.bulb_groups_heading), style = MaterialTheme.typography.titleSmall)
+                    Text(stringResource(R.string.bulb_groups_heading), style = MaterialTheme.typography.titleMedium)
                     Text(
                         stringResource(if (state.groups.isEmpty()) R.string.bulb_groups_none else R.string.bulb_groups_hint),
                         style = MaterialTheme.typography.bodySmall,

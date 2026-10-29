@@ -337,6 +337,34 @@ interface SceneEffectsDao {
 
     @Query("DELETE FROM scene_light_effects WHERE sceneId = :sceneId AND slotId = :slotId")
     suspend fun delete(sceneId: Long, slotId: Long)
+
+    /* Layered effects (database version 13) */
+
+    /** The scene's layers, each group's in priority order. */
+    @Query("SELECT * FROM scene_effect_layers WHERE sceneId = :sceneId ORDER BY slotId, position, id")
+    suspend fun getLayersForScene(sceneId: Long): List<EffectLayerEntity>
+
+    @Query(
+        """
+        SELECT l.* FROM scene_effect_layers l JOIN scenes s ON s.id = l.sceneId
+        WHERE s.adventureId IS NULL AND s.isDefault = 0 ORDER BY l.sceneId, l.slotId, l.position, l.id
+        """,
+    )
+    fun observeLibraryLayers(): Flow<List<EffectLayerEntity>>
+
+    @Query(
+        """
+        SELECT l.* FROM scene_effect_layers l JOIN scenes s ON s.id = l.sceneId
+        WHERE s.adventureId = :adventureId ORDER BY l.sceneId, l.slotId, l.position, l.id
+        """,
+    )
+    fun observeAdventureLayers(adventureId: Long): Flow<List<EffectLayerEntity>>
+
+    @Insert
+    suspend fun insertLayers(layers: List<EffectLayerEntity>)
+
+    @Query("DELETE FROM scene_effect_layers WHERE sceneId = :sceneId AND slotId = :slotId")
+    suspend fun deleteLayers(sceneId: Long, slotId: Long)
 }
 
 @Dao

@@ -1,3 +1,5 @@
 <resources>
     <color name="ic_launcher_background">#2B1B3D</color>
+    <!-- Matches the indigo page color in ui/theme/Color.kt. -->
+    <color name="window_background">#13112A</color>
 </resources>

@@ -1,0 +1,1701 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 13,
+    "identityHash": "61877151753c40a39e8e36e957ef1635",
+    "entities": [
+      {
+        "tableName": "bulbs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `protocolId` TEXT NOT NULL, `serial` TEXT NOT NULL, `lastKnownIp` TEXT NOT NULL, `name` TEXT NOT NULL, `lastSeenAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "protocolId",
+            "columnName": "protocolId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "serial",
+            "columnName": "serial",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastKnownIp",
+            "columnName": "lastKnownIp",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastSeenAt",
+            "columnName": "lastSeenAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_bulbs_protocolId_serial",
+            "unique": true,
+            "columnNames": [
+              "protocolId",
+              "serial"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_bulbs_protocolId_serial` ON `${TABLE_NAME}` (`protocolId`, `serial`)"
+          }
+        ]
+      },
+      {
+        "tableName": "light_slots",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `isRoom` INTEGER NOT NULL DEFAULT 0, `bulbId` INTEGER, FOREIGN KEY(`bulbId`) REFERENCES `bulbs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isRoom",
+            "columnName": "isRoom",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "bulbId",
+            "columnName": "bulbId",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_light_slots_bulbId",
+            "unique": false,
+            "columnNames": [
+              "bulbId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_light_slots_bulbId` ON `${TABLE_NAME}` (`bulbId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "bulbs",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bulbId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "slot_bulbs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`slotId` INTEGER NOT NULL, `bulbId` INTEGER NOT NULL, `position` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`slotId`, `bulbId`), FOREIGN KEY(`slotId`) REFERENCES `light_slots`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`bulbId`) REFERENCES `bulbs`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bulbId",
+            "columnName": "bulbId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "slotId",
+            "bulbId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_slot_bulbs_slotId",
+            "unique": false,
+            "columnNames": [
+              "slotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_slot_bulbs_slotId` ON `${TABLE_NAME}` (`slotId`)"
+          },
+          {
+            "name": "index_slot_bulbs_bulbId",
+            "unique": false,
+            "columnNames": [
+              "bulbId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_slot_bulbs_bulbId` ON `${TABLE_NAME}` (`bulbId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "light_slots",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "slotId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "bulbs",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "bulbId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "adventures",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        }
+      },
+      {
+        "tableName": "scenes",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `adventureId` INTEGER, `parentSceneId` INTEGER, `sortOrder` INTEGER NOT NULL, `fadeMs` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `allLightsOn` INTEGER NOT NULL DEFAULT 0, `isDefault` INTEGER NOT NULL DEFAULT 0, `introFxId` INTEGER, FOREIGN KEY(`adventureId`) REFERENCES `adventures`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`parentSceneId`) REFERENCES `scenes`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL , FOREIGN KEY(`introFxId`) REFERENCES `fx`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "adventureId",
+            "columnName": "adventureId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "parentSceneId",
+            "columnName": "parentSceneId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fadeMs",
+            "columnName": "fadeMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "allLightsOn",
+            "columnName": "allLightsOn",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "isDefault",
+            "columnName": "isDefault",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "introFxId",
+            "columnName": "introFxId",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_scenes_adventureId",
+            "unique": false,
+            "columnNames": [
+              "adventureId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_scenes_adventureId` ON `${TABLE_NAME}` (`adventureId`)"
+          },
+          {
+            "name": "index_scenes_parentSceneId",
+            "unique": false,
+            "columnNames": [
+              "parentSceneId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_scenes_parentSceneId` ON `${TABLE_NAME}` (`parentSceneId`)"
+          },
+          {
+            "name": "index_scenes_introFxId",
+            "unique": false,
+            "columnNames": [
+              "introFxId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_scenes_introFxId` ON `${TABLE_NAME}` (`introFxId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "adventures",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "adventureId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "scenes",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "parentSceneId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "fx",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "introFxId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "scene_lights",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sceneId` INTEGER NOT NULL, `slotId` INTEGER NOT NULL, `isOn` INTEGER NOT NULL, `mode` TEXT NOT NULL, `hue` REAL NOT NULL, `saturation` REAL NOT NULL, `kelvin` INTEGER NOT NULL, `brightness` REAL NOT NULL, PRIMARY KEY(`sceneId`, `slotId`), FOREIGN KEY(`sceneId`) REFERENCES `scenes`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`slotId`) REFERENCES `light_slots`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "sceneId",
+            "columnName": "sceneId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isOn",
+            "columnName": "isOn",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hue",
+            "columnName": "hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "saturation",
+            "columnName": "saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kelvin",
+            "columnName": "kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightness",
+            "columnName": "brightness",
+            "affinity": "REAL",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sceneId",
+            "slotId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_scene_lights_slotId",
+            "unique": false,
+            "columnNames": [
+              "slotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_scene_lights_slotId` ON `${TABLE_NAME}` (`slotId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "scenes",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sceneId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "light_slots",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "slotId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "scene_light_effects",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sceneId` INTEGER NOT NULL, `slotId` INTEGER NOT NULL, `colorShift_enabled` INTEGER NOT NULL, `colorShift_spread` TEXT NOT NULL, `colorShift_waveOffsetMs` INTEGER NOT NULL, `colorShift_order` TEXT NOT NULL, `colorShift_blendMinMs` INTEGER NOT NULL, `colorShift_blendMaxMs` INTEGER NOT NULL, `colorShift_holdMinMs` INTEGER NOT NULL, `colorShift_holdMaxMs` INTEGER NOT NULL, `colorShift_brightnessLocked` INTEGER NOT NULL DEFAULT 1, `brightnessShift_enabled` INTEGER NOT NULL, `brightnessShift_spread` TEXT NOT NULL, `brightnessShift_waveOffsetMs` INTEGER NOT NULL, `brightnessShift_mode` TEXT NOT NULL, `brightnessShift_levelMin` REAL NOT NULL, `brightnessShift_levelMax` REAL NOT NULL, `brightnessShift_speedMinMs` INTEGER NOT NULL, `brightnessShift_speedMaxMs` INTEGER NOT NULL, `flashes_enabled` INTEGER NOT NULL, `flashes_spread` TEXT NOT NULL, `flashes_waveOffsetMs` INTEGER NOT NULL, `flashes_peak` REAL NOT NULL, `flashes_peakMin` REAL NOT NULL DEFAULT 1.0, `flashes_attackMs` INTEGER NOT NULL, `flashes_holdMs` INTEGER NOT NULL, `flashes_releaseMs` INTEGER NOT NULL, `flashes_gapMinMs` INTEGER NOT NULL, `flashes_gapMaxMs` INTEGER NOT NULL, `flashes_pulsesMin` INTEGER NOT NULL, `flashes_pulsesMax` INTEGER NOT NULL, `flashes_spacingMinMs` INTEGER NOT NULL, `flashes_spacingMaxMs` INTEGER NOT NULL, `flashes_color_mode` TEXT NOT NULL, `flashes_color_hue` REAL NOT NULL, `flashes_color_saturation` REAL NOT NULL, `flashes_color_kelvin` INTEGER NOT NULL, `flashes_color_brightness` REAL NOT NULL DEFAULT 1.0, `spin_enabled` INTEGER NOT NULL, `spin_level` REAL NOT NULL, `spin_attackMs` INTEGER NOT NULL, `spin_holdMs` INTEGER NOT NULL, `spin_releaseMs` INTEGER NOT NULL, `spin_stepMs` INTEGER NOT NULL, `spin_lapGapMs` INTEGER NOT NULL, `spin_reverse` INTEGER NOT NULL DEFAULT 0, `spin_color_mode` TEXT NOT NULL, `spin_color_hue` REAL NOT NULL, `spin_color_saturation` REAL NOT NULL, `spin_color_kelvin` INTEGER NOT NULL, `spin_color_brightness` REAL NOT NULL DEFAULT 1.0, PRIMARY KEY(`sceneId`, `slotId`), FOREIGN KEY(`sceneId`, `slotId`) REFERENCES `scene_lights`(`sceneId`, `slotId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "sceneId",
+            "columnName": "sceneId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.enabled",
+            "columnName": "colorShift_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.spread",
+            "columnName": "colorShift_spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.waveOffsetMs",
+            "columnName": "colorShift_waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.order",
+            "columnName": "colorShift_order",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.blendMinMs",
+            "columnName": "colorShift_blendMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.blendMaxMs",
+            "columnName": "colorShift_blendMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.holdMinMs",
+            "columnName": "colorShift_holdMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.holdMaxMs",
+            "columnName": "colorShift_holdMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "colorShift.brightnessLocked",
+            "columnName": "colorShift_brightnessLocked",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "1"
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.enabled",
+            "columnName": "brightnessShift_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.spread",
+            "columnName": "brightnessShift_spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.waveOffsetMs",
+            "columnName": "brightnessShift_waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.mode",
+            "columnName": "brightnessShift_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.levelMin",
+            "columnName": "brightnessShift_levelMin",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.levelMax",
+            "columnName": "brightnessShift_levelMax",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.speedMinMs",
+            "columnName": "brightnessShift_speedMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyBrightnessShift.speedMaxMs",
+            "columnName": "brightnessShift_speedMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.enabled",
+            "columnName": "flashes_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.spread",
+            "columnName": "flashes_spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.waveOffsetMs",
+            "columnName": "flashes_waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.peak",
+            "columnName": "flashes_peak",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.peakMin",
+            "columnName": "flashes_peakMin",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "legacyFlashes.attackMs",
+            "columnName": "flashes_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.holdMs",
+            "columnName": "flashes_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.releaseMs",
+            "columnName": "flashes_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.gapMinMs",
+            "columnName": "flashes_gapMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.gapMaxMs",
+            "columnName": "flashes_gapMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.pulsesMin",
+            "columnName": "flashes_pulsesMin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.pulsesMax",
+            "columnName": "flashes_pulsesMax",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.spacingMinMs",
+            "columnName": "flashes_spacingMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.spacingMaxMs",
+            "columnName": "flashes_spacingMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.color.mode",
+            "columnName": "flashes_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.color.hue",
+            "columnName": "flashes_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.color.saturation",
+            "columnName": "flashes_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.color.kelvin",
+            "columnName": "flashes_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacyFlashes.color.brightness",
+            "columnName": "flashes_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "legacySpin.enabled",
+            "columnName": "spin_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.level",
+            "columnName": "spin_level",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.attackMs",
+            "columnName": "spin_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.holdMs",
+            "columnName": "spin_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.releaseMs",
+            "columnName": "spin_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.stepMs",
+            "columnName": "spin_stepMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.lapGapMs",
+            "columnName": "spin_lapGapMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.reverse",
+            "columnName": "spin_reverse",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "legacySpin.color.mode",
+            "columnName": "spin_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.color.hue",
+            "columnName": "spin_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.color.saturation",
+            "columnName": "spin_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.color.kelvin",
+            "columnName": "spin_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "legacySpin.color.brightness",
+            "columnName": "spin_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sceneId",
+            "slotId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "scene_lights",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sceneId",
+              "slotId"
+            ],
+            "referencedColumns": [
+              "sceneId",
+              "slotId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "scene_light_effect_colors",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`sceneId` INTEGER NOT NULL, `slotId` INTEGER NOT NULL, `position` INTEGER NOT NULL, `mode` TEXT NOT NULL, `hue` REAL NOT NULL, `saturation` REAL NOT NULL, `kelvin` INTEGER NOT NULL, `brightness` REAL NOT NULL DEFAULT 1.0, PRIMARY KEY(`sceneId`, `slotId`, `position`), FOREIGN KEY(`sceneId`, `slotId`) REFERENCES `scene_light_effects`(`sceneId`, `slotId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "sceneId",
+            "columnName": "sceneId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "color.mode",
+            "columnName": "mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "color.hue",
+            "columnName": "hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "color.saturation",
+            "columnName": "saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "color.kelvin",
+            "columnName": "kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "color.brightness",
+            "columnName": "brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "sceneId",
+            "slotId",
+            "position"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "scene_light_effects",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sceneId",
+              "slotId"
+            ],
+            "referencedColumns": [
+              "sceneId",
+              "slotId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "fx",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `name` TEXT NOT NULL, `sortOrder` INTEGER NOT NULL, `primitive` TEXT NOT NULL, `targetAll` INTEGER NOT NULL, `spread` TEXT NOT NULL, `waveOffsetMs` INTEGER NOT NULL, `transition` TEXT NOT NULL, `transitionSceneId` INTEGER, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `pulse_peakMin` REAL NOT NULL, `pulse_peak` REAL NOT NULL, `pulse_attackMs` INTEGER NOT NULL, `pulse_holdMs` INTEGER NOT NULL, `pulse_releaseMs` INTEGER NOT NULL, `pulse_pulsesMin` INTEGER NOT NULL, `pulse_pulsesMax` INTEGER NOT NULL, `pulse_spacingMinMs` INTEGER NOT NULL, `pulse_spacingMaxMs` INTEGER NOT NULL, `pulse_affectsColor` INTEGER NOT NULL, `pulse_affectsSaturation` INTEGER NOT NULL, `pulse_affectsBrightness` INTEGER NOT NULL, `pulse_color_mode` TEXT NOT NULL, `pulse_color_hue` REAL NOT NULL, `pulse_color_saturation` REAL NOT NULL, `pulse_color_kelvin` INTEGER NOT NULL, `pulse_color_brightness` REAL NOT NULL DEFAULT 1.0, `flicker_durationMs` INTEGER NOT NULL, `flicker_depth` REAL NOT NULL, `flicker_intervalMinMs` INTEGER NOT NULL, `flicker_intervalMaxMs` INTEGER NOT NULL, `strobe_level` REAL NOT NULL, `strobe_flashesPerSecond` REAL NOT NULL, `strobe_durationMs` INTEGER NOT NULL, `strobe_color_mode` TEXT NOT NULL, `strobe_color_hue` REAL NOT NULL, `strobe_color_saturation` REAL NOT NULL, `strobe_color_kelvin` INTEGER NOT NULL, `strobe_color_brightness` REAL NOT NULL DEFAULT 1.0, `spin_level` REAL NOT NULL, `spin_attackMs` INTEGER NOT NULL, `spin_holdMs` INTEGER NOT NULL, `spin_releaseMs` INTEGER NOT NULL, `spin_stepMs` INTEGER NOT NULL, `spin_laps` INTEGER NOT NULL, `spin_reverse` INTEGER NOT NULL DEFAULT 0, `spin_color_mode` TEXT NOT NULL, `spin_color_hue` REAL NOT NULL, `spin_color_saturation` REAL NOT NULL, `spin_color_kelvin` INTEGER NOT NULL, `spin_color_brightness` REAL NOT NULL DEFAULT 1.0, FOREIGN KEY(`transitionSceneId`) REFERENCES `scenes`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sortOrder",
+            "columnName": "sortOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "primitive",
+            "columnName": "primitive",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetAll",
+            "columnName": "targetAll",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spread",
+            "columnName": "spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waveOffsetMs",
+            "columnName": "waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transition",
+            "columnName": "transition",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "transitionSceneId",
+            "columnName": "transitionSceneId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.peakMin",
+            "columnName": "pulse_peakMin",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.peak",
+            "columnName": "pulse_peak",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.attackMs",
+            "columnName": "pulse_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.holdMs",
+            "columnName": "pulse_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.releaseMs",
+            "columnName": "pulse_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.pulsesMin",
+            "columnName": "pulse_pulsesMin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.pulsesMax",
+            "columnName": "pulse_pulsesMax",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.spacingMinMs",
+            "columnName": "pulse_spacingMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.spacingMaxMs",
+            "columnName": "pulse_spacingMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.affectsColor",
+            "columnName": "pulse_affectsColor",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.affectsSaturation",
+            "columnName": "pulse_affectsSaturation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.affectsBrightness",
+            "columnName": "pulse_affectsBrightness",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.color.mode",
+            "columnName": "pulse_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.color.hue",
+            "columnName": "pulse_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.color.saturation",
+            "columnName": "pulse_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.color.kelvin",
+            "columnName": "pulse_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pulse.color.brightness",
+            "columnName": "pulse_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "flicker.durationMs",
+            "columnName": "flicker_durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flicker.depth",
+            "columnName": "flicker_depth",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flicker.intervalMinMs",
+            "columnName": "flicker_intervalMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flicker.intervalMaxMs",
+            "columnName": "flicker_intervalMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.level",
+            "columnName": "strobe_level",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.flashesPerSecond",
+            "columnName": "strobe_flashesPerSecond",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.durationMs",
+            "columnName": "strobe_durationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.color.mode",
+            "columnName": "strobe_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.color.hue",
+            "columnName": "strobe_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.color.saturation",
+            "columnName": "strobe_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.color.kelvin",
+            "columnName": "strobe_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "strobe.color.brightness",
+            "columnName": "strobe_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "spin.level",
+            "columnName": "spin_level",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.attackMs",
+            "columnName": "spin_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.holdMs",
+            "columnName": "spin_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.releaseMs",
+            "columnName": "spin_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.stepMs",
+            "columnName": "spin_stepMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.laps",
+            "columnName": "spin_laps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.reverse",
+            "columnName": "spin_reverse",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "spin.color.mode",
+            "columnName": "spin_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.hue",
+            "columnName": "spin_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.saturation",
+            "columnName": "spin_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.kelvin",
+            "columnName": "spin_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.brightness",
+            "columnName": "spin_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_fx_transitionSceneId",
+            "unique": false,
+            "columnNames": [
+              "transitionSceneId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_fx_transitionSceneId` ON `${TABLE_NAME}` (`transitionSceneId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "scenes",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "transitionSceneId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "fx_targets",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`fxId` INTEGER NOT NULL, `slotId` INTEGER NOT NULL, PRIMARY KEY(`fxId`, `slotId`), FOREIGN KEY(`fxId`) REFERENCES `fx`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`slotId`) REFERENCES `light_slots`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "fxId",
+            "columnName": "fxId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "fxId",
+            "slotId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_fx_targets_slotId",
+            "unique": false,
+            "columnNames": [
+              "slotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_fx_targets_slotId` ON `${TABLE_NAME}` (`slotId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "fx",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "fxId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "light_slots",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "slotId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "adventure_fx",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`adventureId` INTEGER NOT NULL, `fxId` INTEGER NOT NULL, `position` INTEGER NOT NULL, PRIMARY KEY(`adventureId`, `fxId`), FOREIGN KEY(`adventureId`) REFERENCES `adventures`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`fxId`) REFERENCES `fx`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "adventureId",
+            "columnName": "adventureId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fxId",
+            "columnName": "fxId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "adventureId",
+            "fxId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_adventure_fx_fxId",
+            "unique": false,
+            "columnNames": [
+              "fxId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_adventure_fx_fxId` ON `${TABLE_NAME}` (`fxId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "adventures",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "adventureId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "fx",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "fxId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "scene_effect_layers",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `sceneId` INTEGER NOT NULL, `slotId` INTEGER NOT NULL, `position` INTEGER NOT NULL, `type` TEXT NOT NULL, `brightnessShift_enabled` INTEGER NOT NULL, `brightnessShift_spread` TEXT NOT NULL, `brightnessShift_waveOffsetMs` INTEGER NOT NULL, `brightnessShift_mode` TEXT NOT NULL, `brightnessShift_levelMin` REAL NOT NULL, `brightnessShift_levelMax` REAL NOT NULL, `brightnessShift_speedMinMs` INTEGER NOT NULL, `brightnessShift_speedMaxMs` INTEGER NOT NULL, `flashes_enabled` INTEGER NOT NULL, `flashes_spread` TEXT NOT NULL, `flashes_waveOffsetMs` INTEGER NOT NULL, `flashes_peak` REAL NOT NULL, `flashes_peakMin` REAL NOT NULL DEFAULT 1.0, `flashes_attackMs` INTEGER NOT NULL, `flashes_holdMs` INTEGER NOT NULL, `flashes_releaseMs` INTEGER NOT NULL, `flashes_gapMinMs` INTEGER NOT NULL, `flashes_gapMaxMs` INTEGER NOT NULL, `flashes_pulsesMin` INTEGER NOT NULL, `flashes_pulsesMax` INTEGER NOT NULL, `flashes_spacingMinMs` INTEGER NOT NULL, `flashes_spacingMaxMs` INTEGER NOT NULL, `flashes_color_mode` TEXT NOT NULL, `flashes_color_hue` REAL NOT NULL, `flashes_color_saturation` REAL NOT NULL, `flashes_color_kelvin` INTEGER NOT NULL, `flashes_color_brightness` REAL NOT NULL DEFAULT 1.0, `spin_enabled` INTEGER NOT NULL, `spin_level` REAL NOT NULL, `spin_attackMs` INTEGER NOT NULL, `spin_holdMs` INTEGER NOT NULL, `spin_releaseMs` INTEGER NOT NULL, `spin_stepMs` INTEGER NOT NULL, `spin_lapGapMs` INTEGER NOT NULL, `spin_reverse` INTEGER NOT NULL DEFAULT 0, `spin_color_mode` TEXT NOT NULL, `spin_color_hue` REAL NOT NULL, `spin_color_saturation` REAL NOT NULL, `spin_color_kelvin` INTEGER NOT NULL, `spin_color_brightness` REAL NOT NULL DEFAULT 1.0, FOREIGN KEY(`sceneId`, `slotId`) REFERENCES `scene_lights`(`sceneId`, `slotId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sceneId",
+            "columnName": "sceneId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "slotId",
+            "columnName": "slotId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "type",
+            "columnName": "type",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.enabled",
+            "columnName": "brightnessShift_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.spread",
+            "columnName": "brightnessShift_spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.waveOffsetMs",
+            "columnName": "brightnessShift_waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.mode",
+            "columnName": "brightnessShift_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.levelMin",
+            "columnName": "brightnessShift_levelMin",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.levelMax",
+            "columnName": "brightnessShift_levelMax",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.speedMinMs",
+            "columnName": "brightnessShift_speedMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "brightnessShift.speedMaxMs",
+            "columnName": "brightnessShift_speedMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.enabled",
+            "columnName": "flashes_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.spread",
+            "columnName": "flashes_spread",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.waveOffsetMs",
+            "columnName": "flashes_waveOffsetMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.peak",
+            "columnName": "flashes_peak",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.peakMin",
+            "columnName": "flashes_peakMin",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "flashes.attackMs",
+            "columnName": "flashes_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.holdMs",
+            "columnName": "flashes_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.releaseMs",
+            "columnName": "flashes_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.gapMinMs",
+            "columnName": "flashes_gapMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.gapMaxMs",
+            "columnName": "flashes_gapMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.pulsesMin",
+            "columnName": "flashes_pulsesMin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.pulsesMax",
+            "columnName": "flashes_pulsesMax",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.spacingMinMs",
+            "columnName": "flashes_spacingMinMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.spacingMaxMs",
+            "columnName": "flashes_spacingMaxMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.color.mode",
+            "columnName": "flashes_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.color.hue",
+            "columnName": "flashes_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.color.saturation",
+            "columnName": "flashes_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.color.kelvin",
+            "columnName": "flashes_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "flashes.color.brightness",
+            "columnName": "flashes_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          },
+          {
+            "fieldPath": "spin.enabled",
+            "columnName": "spin_enabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.level",
+            "columnName": "spin_level",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.attackMs",
+            "columnName": "spin_attackMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.holdMs",
+            "columnName": "spin_holdMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.releaseMs",
+            "columnName": "spin_releaseMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.stepMs",
+            "columnName": "spin_stepMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.lapGapMs",
+            "columnName": "spin_lapGapMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.reverse",
+            "columnName": "spin_reverse",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "spin.color.mode",
+            "columnName": "spin_color_mode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.hue",
+            "columnName": "spin_color_hue",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.saturation",
+            "columnName": "spin_color_saturation",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.kelvin",
+            "columnName": "spin_color_kelvin",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "spin.color.brightness",
+            "columnName": "spin_color_brightness",
+            "affinity": "REAL",
+            "notNull": true,
+            "defaultValue": "1.0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_scene_effect_layers_sceneId_slotId",
+            "unique": false,
+            "columnNames": [
+              "sceneId",
+              "slotId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_scene_effect_layers_sceneId_slotId` ON `${TABLE_NAME}` (`sceneId`, `slotId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "scene_lights",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "sceneId",
+              "slotId"
+            ],
+            "referencedColumns": [
+              "sceneId",
+              "slotId"
+            ]
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '61877151753c40a39e8e36e957ef1635')"
+    ]
+  }
+}

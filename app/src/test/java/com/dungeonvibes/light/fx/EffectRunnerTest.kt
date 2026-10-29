@@ -1,5 +1,9 @@
 package com.dungeonvibes.light.fx
 
+import com.dungeonvibes.data.scene.flashes
+import com.dungeonvibes.data.scene.brightnessShift
+import com.dungeonvibes.data.scene.withFlashes
+import com.dungeonvibes.data.scene.withBrightnessShift
 import com.dungeonvibes.data.db.BrightnessShiftSettings
 import com.dungeonvibes.data.db.FlashSettings
 import com.dungeonvibes.data.db.FlickerSettings
@@ -9,6 +13,7 @@ import com.dungeonvibes.data.db.PulseSettings
 import com.dungeonvibes.data.db.SpinFxSettings
 import com.dungeonvibes.data.db.StrobeSettings
 import com.dungeonvibes.data.db.Spread
+import com.dungeonvibes.data.scene.EffectLayer
 import com.dungeonvibes.data.scene.GroupEffects
 import com.dungeonvibes.light.BulbAddress
 import com.dungeonvibes.light.LightController
@@ -56,18 +61,15 @@ class EffectRunnerTest {
         return Fixture(fake, runner, online)
     }
 
-    private val breathing = GroupEffects(
-        brightnessShift = BrightnessShiftSettings(
+    private val breathing = GroupEffects(layers = listOf(EffectLayer.brightness(BrightnessShiftSettings(
             enabled = true,
             levelMin = 0.1f,
             levelMax = 0.9f,
             speedMinMs = 1_000,
             speedMaxMs = 1_000,
-        ),
-    )
+        ))))
 
-    private val lightning = GroupEffects(
-        flashes = FlashSettings(
+    private val lightning = GroupEffects(layers = listOf(EffectLayer.flashes(FlashSettings(
             enabled = true,
             color = FxColor.white(6_500),
             peak = 1f,
@@ -76,8 +78,7 @@ class EffectRunnerTest {
             releaseMs = 250,
             gapMinMs = 1_000,
             gapMaxMs = 1_000,
-        ),
-    )
+        ))))
 
     private fun group(effects: GroupEffects, vararg bulbs: BulbAddress) = EffectGroup(1, base, effects, bulbs.toList())
 
@@ -140,7 +141,7 @@ class EffectRunnerTest {
 
     @Test
     fun flickerPulses_landExactlyOnTheirEdges() = runTest {
-        val rolling = lightning.copy(flashes = lightning.flashes.withFlicker(true))
+        val rolling = lightning.withFlashes(lightning.flashes.withFlicker(true))
         val f = fixture()
         f.runner.start(listOf(group(rolling, bulb1)), startFadeMs = 0, random = Random(1))
         // Each pulse snaps on (fade 0) the moment it starts; the frame before it is the dim 0.08
@@ -199,7 +200,7 @@ class EffectRunnerTest {
         advanceTimeBy(500)
         f.fake.clearLog()
 
-        val faster = breathing.copy(brightnessShift = breathing.brightnessShift.copy(speedMinMs = 500, speedMaxMs = 500))
+        val faster = breathing.withBrightnessShift(breathing.brightnessShift.copy(speedMinMs = 500, speedMaxMs = 500))
         f.runner.update(
             listOf(group(faster, bulb1), group(lightning, bulb2).copy(slotId = 2)),
             startFadeMs = 0,
@@ -226,7 +227,7 @@ class EffectRunnerTest {
     @Test
     fun triggerFlash_strikesImmediately() = runTest {
         val f = fixture()
-        val rare = lightning.copy(flashes = lightning.flashes.copy(gapMinMs = 60_000, gapMaxMs = 60_000))
+        val rare = lightning.withFlashes(lightning.flashes.copy(gapMinMs = 60_000, gapMaxMs = 60_000))
         f.runner.start(listOf(group(rare, bulb1)), startFadeMs = 0, random = Random(1))
         advanceTimeBy(500)
         f.fake.clearLog()

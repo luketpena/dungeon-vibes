@@ -1,5 +1,6 @@
 package com.dungeonvibes.light.fx
 
+import com.dungeonvibes.data.db.EffectLayerType
 import com.dungeonvibes.data.db.BrightnessMode
 import com.dungeonvibes.data.db.BrightnessShiftSettings
 import com.dungeonvibes.data.db.ColorOrder
@@ -545,12 +546,13 @@ internal class SpinTimeline(settings: SpinSettings, index: Int, bulbCount: Int) 
 }
 
 /**
- * Runs one group's effect layers for its bulbs (indexed 0 until [bulbCount], in the group's bulb
- * order, which Wave follows). Not thread-safe: one runner coroutine drives it.
+ * Runs one group's effects for its bulbs (indexed 0 until [bulbCount], in the group's bulb order,
+ * which Wave and Spin follow). Not thread-safe: one runner coroutine drives it.
  *
- * Mixing per bulb (FX_REQUIREMENTS.md → How the layers mix): base → Color shift replaces the
- * color → Brightness shift replaces the brightness → a playing flash blends everything toward its
- * color and peak by the envelope level.
+ * Mixing per bulb (owner decisions, Oct 23, 2026): base → Color shift replaces the color → every
+ * Brightness shift layer multiplies into the brightness (one alone sets it, as before) → the
+ * Flashes and Spin layers blend on top from the lowest priority up, so where two are lit at once
+ * the higher one wins.
  */
 class GroupEffectRun(
     base: Hsbk,
@@ -562,13 +564,25 @@ class GroupEffectRun(
 
     private val colorLayer: List<ColorShiftTimeline>?
     private val colorDelay: LongArray?
-    private val brightnessLayer: List<BrightnessTimeline>?
-    private val brightnessDelay: LongArray?
-    private val flashLayer: List<FlashTimeline>?
-    private val flashDelay: LongArray?
-    private val flashColor: ColorPoint?
-    private val spinLayer: Array<SpinTimeline>?
-    private val spinColor: ColorPoint?
+
+    /** A Brightness shift layer: one timeline per bulb (shared under Together) and Wave delays. */
+    private class BrightnessRun(val timelines: List<BrightnessTimeline>, val delays: LongArray)
+
+    /** A Flashes or Spin layer, laid over the bulb's color by its envelope. */
+    private sealed class Overlay(val layerId: Long)
+
+    private class FlashRun(layerId: Long, val timelines: List<FlashTimeline>, val delays: LongArray, val color: ColorPoint) :
+        Overlay(layerId)
+
+    private class SpinRun(layerId: Long, val timelines: Array<SpinTimeline>, val color: ColorPoint) : Overlay(layerId)
+
+    private val brightnessRuns: Array<BrightnessRun>
+
+    /** Flashes and Spin layers, lowest priority first (the order they're laid on). */
+    private val overlays: Array<Overlay>
+
+    /** Whether any layer is Flashes (the runner lays those over bulbs a higher group owns). */
+    val hasFlashes: Boolean
 
     init {
         if (effects.runsColorShift) {
@@ -580,33 +594,43 @@ class GroupEffectRun(
             colorLayer = null
             colorDelay = null
         }
-        if (effects.brightnessShift.enabled) {
-            val settings = effects.brightnessShift
-            brightnessLayer = buildLayer(settings.spread, random) { r, desync -> BrightnessTimeline(settings, r, desync) }
-            brightnessDelay = delays(settings.spread, settings.waveOffsetMs)
-        } else {
-            brightnessLayer = null
-            brightnessDelay = null
+        val brightness = ArrayList<BrightnessRun>(2)
+        val laid = ArrayList<Overlay>(4)
+        val layers = effects.layers
+        // Bottom (lowest priority, last in the list) first, so higher layers are laid over them.
+        for (i in layers.indices.reversed()) {
+            val layer = layers[i]
+            when (layer.type) {
+                EffectLayerType.BRIGHTNESS_SHIFT -> {
+                    val settings = layer.brightnessShift
+                    brightness.add(
+                        BrightnessRun(
+                            buildLayer(settings.spread, random) { r, desync -> BrightnessTimeline(settings, r, desync) },
+                            delays(settings.spread, settings.waveOffsetMs),
+                        ),
+                    )
+                }
+                EffectLayerType.FLASHES -> {
+                    val settings = layer.flashes
+                    laid.add(
+                        FlashRun(
+                            layer.id,
+                            buildLayer(settings.spread, random) { r, _ -> FlashTimeline(settings, r) },
+                            delays(settings.spread, settings.waveOffsetMs),
+                            ColorPoint.of(settings.color),
+                        ),
+                    )
+                }
+                // Spin runs across the bulbs in their order; spread doesn't apply.
+                EffectLayerType.SPIN -> if (bulbCount > 0) {
+                    val settings = layer.spin
+                    laid.add(SpinRun(layer.id, Array(bulbCount) { SpinTimeline(settings, it, bulbCount) }, ColorPoint.of(settings.color)))
+                }
+            }
         }
-        if (effects.flashes.enabled) {
-            val settings = effects.flashes
-            flashLayer = buildLayer(settings.spread, random) { r, _ -> FlashTimeline(settings, r) }
-            flashDelay = delays(settings.spread, settings.waveOffsetMs)
-            flashColor = ColorPoint.of(settings.color)
-        } else {
-            flashLayer = null
-            flashDelay = null
-            flashColor = null
-        }
-        // Spin runs across the bulbs in their order; spread doesn't apply.
-        if (effects.spin.enabled && bulbCount > 0) {
-            val settings = effects.spin
-            spinLayer = Array(bulbCount) { SpinTimeline(settings, it, bulbCount) }
-            spinColor = ColorPoint.of(settings.color)
-        } else {
-            spinLayer = null
-            spinColor = null
-        }
+        brightnessRuns = brightness.toTypedArray()
+        overlays = laid.toTypedArray()
+        hasFlashes = laid.any { it is FlashRun }
     }
 
     /** Moves the group's base (its scene color) without restarting any timeline. */
@@ -615,67 +639,117 @@ class GroupEffectRun(
     }
 
     /**
-     * Plays a burst now (at [t]) on every bulb, following the layer's spread: Together and
-     * Independent bulbs flash at once, Wave bulbs one offset after another. No-op without Flashes.
+     * Plays a burst now (at [t]) on every bulb of the Flashes layer [layerId] (every Flashes layer
+     * when null), following its spread: Together and Independent bulbs flash at once, Wave bulbs
+     * one offset after another. No-op without Flashes.
      */
-    fun triggerFlash(t: Long) {
-        val layer = flashLayer ?: return
-        val delays = flashDelay!!
-        for (i in 0 until bulbCount) layer[i].trigger(t, layerTime(t, delays, i))
+    fun triggerFlash(t: Long, layerId: Long? = null) {
+        for (overlay in overlays) {
+            if (overlay !is FlashRun) continue
+            if (layerId != null && overlay.layerId != layerId) continue
+            val delays = overlay.delays
+            for (i in 0 until bulbCount) overlay.timelines[i].trigger(t, layerTime(t, delays, i))
+        }
     }
 
     /**
-     * Identifies the flash segment bulb [bulb] is in at [t]; it changes at every attack, hold,
-     * release and idle start, which is when the runner sends straight away. -1 without Flashes.
+     * Identifies the flash and spin segments bulb [bulb] is in at [t]; it changes at every attack,
+     * hold, release and idle start, which is when the runner sends straight away. -1 with no
+     * Flashes or Spin.
      */
     fun flashKey(bulb: Int, t: Long): Long {
-        val spin = spinLayer?.get(bulb)?.key(t) ?: 0L
-        val layer = flashLayer ?: return if (spinLayer == null) -1L else spin
-        val ft = layerTime(t, flashDelay!!, bulb)
-        val timeline = layer[bulb]
-        timeline.advance(ft)
-        return (timeline.serial * 4 + timeline.segment(ft)) * 31 + spin
+        val count = overlays.size
+        if (count == 0) return -1L
+        var key = 0L
+        for (i in 0 until count) {
+            key = key * 31 + when (val overlay = overlays[i]) {
+                is FlashRun -> {
+                    val ft = layerTime(t, overlay.delays, bulb)
+                    val timeline = overlay.timelines[bulb]
+                    timeline.advance(ft)
+                    timeline.serial * 4 + timeline.segment(ft)
+                }
+                is SpinRun -> overlay.timelines[bulb].key(t)
+            }
+        }
+        return key
     }
 
     /**
-     * When bulb [bulb]'s current flash segment ends, on the run's clock (call [flashKey] with [t]
-     * first). The runner wakes then, so edges aren't late. [Long.MAX_VALUE] without Flashes.
+     * When bulb [bulb]'s next flash or spin segment edge comes, on the run's clock (call
+     * [flashKey] with [t] first). The runner wakes then, so edges aren't late. [Long.MAX_VALUE]
+     * with no Flashes or Spin.
      */
     fun nextFlashEdge(bulb: Int, t: Long): Long {
-        val spinEdge = spinLayer?.get(bulb)?.segmentEnd(t) ?: Long.MAX_VALUE
-        val layer = flashLayer ?: return spinEdge
-        val delays = flashDelay!!
-        return minOf(spinEdge, layer[bulb].segmentEnd(layerTime(t, delays, bulb)) + delays[bulb])
+        var next = Long.MAX_VALUE
+        for (overlay in overlays) {
+            val edge = when (overlay) {
+                is FlashRun -> overlay.timelines[bulb].segmentEnd(layerTime(t, overlay.delays, bulb)) + overlay.delays[bulb]
+                is SpinRun -> overlay.timelines[bulb].segmentEnd(t)
+            }
+            if (edge < next) next = edge
+        }
+        return next
     }
 
     /**
      * Writes bulb [bulb]'s target at [t] into [out] and returns the transition to send it with.
      * Color and brightness shifts are taken [lookAheadMs] ahead (the runner fades to them over
-     * that long, so the bulb arrives on time). During a flash's attack or release the target is
-     * where the envelope will be at the end of that segment (or one frame ahead, if sooner), so
-     * short attacks stay crisp.
+     * that long, so the bulb arrives on time). During a flash's or spin's attack or release the
+     * target is where the envelope will be at the end of that segment (or one frame ahead, if
+     * sooner), so short attacks stay crisp.
      */
     fun sample(bulb: Int, t: Long, out: Hsbk, lookAheadMs: Long = 0L): Int {
         out.set(base)
         val ahead = t + lookAheadMs
         val colors = colorLayer
         if (colors != null) colors[bulb].sample(layerTime(ahead, colorDelay!!, bulb), out)
-        val brightness = brightnessLayer
-        if (brightness != null) out.brightness = brightness[bulb].sample(layerTime(ahead, brightnessDelay!!, bulb))
-
+        val brightnessCount = brightnessRuns.size
+        if (brightnessCount > 0) {
+            // Each Brightness shift scales the others (owner decision): one alone sets the level.
+            var level = 1f
+            for (i in 0 until brightnessCount) {
+                val run = brightnessRuns[i]
+                level *= run.timelines[bulb].sample(layerTime(ahead, run.delays, bulb))
+            }
+            out.brightness = level
+        }
         val regular = (if (lookAheadMs > 0L) lookAheadMs else EffectTiming.FRAME_MS).toInt()
-        val spun = applySpin(bulb, t, out, regular)
-        val flashed = applyFlash(bulb, t, out, regular)
-        return minOf(spun, flashed)
+        var transition = regular
+        for (overlay in overlays) {
+            val edge = when (overlay) {
+                is FlashRun -> applyFlashRun(overlay, bulb, t, out, regular)
+                is SpinRun -> applySpinRun(overlay, bulb, t, out, regular)
+            }
+            if (edge < transition) transition = edge
+        }
+        return transition
     }
 
     /**
-     * Lays bulb [bulb]'s Spin at [t] over [out] (color toward the spin color, brightness up to its
-     * level: brightest wins) and returns the transition: [regular], or the time to the end of an
-     * attack or release (aimed there, so short attacks stay crisp), or 0 to snap on for a hold.
+     * Lays this group's Flashes layers (lowest priority first) over whatever [out] holds for bulb
+     * [bulb] at [t] and returns the transition: [regular], or shorter during an attack or release.
+     * The runner uses it to lay this group's flashes over a bulb another group owns (owner
+     * decision: a bulb in several lit groups flashes with every one of them). Returns [regular]
+     * untouched without Flashes.
      */
-    private fun applySpin(bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
-        val timeline = spinLayer?.get(bulb) ?: return regular
+    fun applyFlash(bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
+        var transition = regular
+        for (overlay in overlays) {
+            if (overlay !is FlashRun) continue
+            val edge = applyFlashRun(overlay, bulb, t, out, regular)
+            if (edge < transition) transition = edge
+        }
+        return transition
+    }
+
+    /**
+     * Lays a Spin layer over [out] (color toward the spin color, brightness up to its level) and
+     * returns the transition: [regular], or the time to the end of an attack or release (aimed
+     * there, so short attacks stay crisp), or 0 to snap on for a hold.
+     */
+    private fun applySpinRun(run: SpinRun, bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
+        val timeline = run.timelines[bulb]
         val segment = timeline.segment(t)
         var lead = 0L
         var transition = regular.toLong()
@@ -687,7 +761,7 @@ class GroupEffectRun(
         }
         val level = timeline.levelAt(t + lead)
         if (level > 0f) {
-            val spin = spinColor!!
+            val spin = run.color
             blendColor(out.hue, out.saturation, out.kelvin, spin.hue, spin.saturation, spin.kelvin, level, out)
             val peak = timeline.peak
             if (peak > out.brightness) out.brightness += (peak - out.brightness) * level
@@ -695,17 +769,10 @@ class GroupEffectRun(
         return transition.toInt()
     }
 
-    /**
-     * Blends bulb [bulb]'s flash at [t] into whatever [out] holds and returns the transition to
-     * send it with: [regular], or shorter during a flash's attack or release, so short attacks
-     * stay crisp. [sample] uses it for the group's own bulbs; the runner also uses it to lay this
-     * group's flashes over a bulb another group owns (owner decision: a bulb in several lit
-     * groups flashes with every one of them). Returns [regular] untouched without Flashes.
-     */
-    fun applyFlash(bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
-        val flashes = flashLayer ?: return regular
-        val ft = layerTime(t, flashDelay!!, bulb)
-        val timeline = flashes[bulb]
+    /** Blends one Flashes layer into [out] for bulb [bulb] at [t]; see [applyFlash]. */
+    private fun applyFlashRun(run: FlashRun, bulb: Int, t: Long, out: Hsbk, regular: Int): Int {
+        val ft = layerTime(t, run.delays, bulb)
+        val timeline = run.timelines[bulb]
         timeline.advance(ft)
         val segment = timeline.segment(ft)
         var lead = 0L
@@ -726,7 +793,7 @@ class GroupEffectRun(
             // envelope): bulbs show low saturation as near-white, so an even color fade looked
             // white for most of the release and then snapped to the color (owner feedback).
             val colorLevel = if (segment == FlashTimeline.RELEASE) envelope * envelope * strength else level
-            val flash = flashColor!!
+            val flash = run.color
             blendColor(out.hue, out.saturation, out.kelvin, flash.hue, flash.saturation, flash.kelvin, colorLevel, out)
             out.brightness += (timeline.peak - out.brightness) * level
         }

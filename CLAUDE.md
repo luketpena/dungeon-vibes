@@ -41,6 +41,7 @@ I'm an experienced programmer (game dev in GML, web dev professionally) but new 
 \- When REQUIREMENTS.md is silent, choose the simplest option that fits existing patterns and record it in `DECISIONS.md` (one line: the decision and why).
 
 \- Ask before adding any dependency that isn't listed in the tech stack section.
+- Any form of "boogie" or "jam" (let's boogie, jam on it, boogie time…) means go ahead and complete the request that's on the table, without asking first.
 
 
 

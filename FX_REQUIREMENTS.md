@@ -14,7 +14,7 @@ Same rules as REQUIREMENTS.md: build in the phases below, stop after each with a
 
 ## In scope
 
-- Four effect layers per group in a scene: **Color shift**, **Brightness shift**, **Flashes**, **Spin** (Spin added Oct 23, 2026). Any combination, at most one of each.
+- Per group in a scene: **Color shift** (the Multi-color mode, at most one), and any number of **layered effects** (owner request, Oct 23, 2026; up to 8 per group): **Brightness shift**, **Flashes** and **Spin**, several of one kind allowed (two Spins going opposite ways, two kinds of flash), in a priority order the DM drags.
 - **Spread** per layer: Together, Independent, or Wave.
 - Live preview of effects in the scene editor.
 - Effects running when a scene is applied, including with the screen off or another app in front.
@@ -113,8 +113,8 @@ Per bulb, at each update:
 
 1. Start from the **base**.
 2. If **Color shift** is on, its current color replaces the base color.
-3. If **Brightness shift** is on, its current level replaces the base brightness.
-4. If **Flashes** is on and a flash is playing, blend steps 1–3 toward the flash color and peak brightness by the envelope's level (0 → 1 over Attack, 1 during Hold, 1 → 0 over Release). At level 1 the flash fully wins; as it releases, the layers underneath show through again at wherever they have moved to.
+3. **Brightness shift** layers: one alone replaces the base brightness with its level; several multiply together (owner decision), so a slow breath and a fast flicker give a flickering breath.
+4. **Flashes** and **Spin** layers are laid on from the lowest priority up, so where two are lit at once the higher one wins (owner decision). For each, if a flash is playing, blend steps 1–3 toward the flash color and peak brightness by the envelope's level (0 → 1 over Attack, 1 during Hold, 1 → 0 over Release). At level 1 the flash fully wins; as it releases, the layers underneath show through again at wherever they have moved to.
 
 Blends between a color and a white are handled by the engine (the bulb is in one mode or the other); the DM never has to think about it.
 
@@ -140,7 +140,7 @@ Groups with one bulb behave the same under all three.
 ## Data model
 
 - Effect layers belong to a group's settings in a scene (a SceneLight). A group with no settings, or switched off, has no running effects.
-- Each layer stores its type, an enabled flag, its spread and wave offset, and its controls. Color shift palettes store their colors in order.
+- Color shift stores its settings per group (`scene_light_effects`), its palette's colors in order. Each layered effect is a row of `scene_effect_layers` (database version 13): its group, priority position, type and that type's settings. Upgrading turned every effect that was on into a layer (Flashes above Spin above Brightness shift, as they used to mix) and dropped those that were off (owner decision).
 - Deleting a scene or a group deletes its layers.
 - **Rules:** copying a library scene into an adventure, resetting to library version, and promoting to the library all include effect layers, exactly like the rest of a group's settings (REQUIREMENTS.md rules 1–5). Editing one copy's effects never changes another's.
 - FX data is described under FX library and board.
@@ -148,7 +148,7 @@ Groups with one bulb behave the same under all three.
 
 ## Scene editor
 
-- Each group's expanded panel offers **Color | White | Multi-color** (Multi-color is the Color shift layer). Under it, the mode's settings sit in outlined boxes: Color → a **Color** box (hue, saturation, brightness); White → a **Color** box (temperature, brightness); Multi-color → a **Color** box (palette swatches with add/remove, then the chosen color's hue, saturation and brightness with a lock) and a **Behavior** box (order, spread, blend, hold). Then an **Effects** section with Brightness shift, Flashes and Spin as switchable boxes, each showing its controls when on.
+- Each group's expanded panel offers **Color | White | Multi-color** (Multi-color is the Color shift layer). Under it, the mode's settings sit in outlined boxes: Color → a **Color** box (hue, saturation, brightness); White → a **Color** box (temperature, brightness); Multi-color → a **Color** box (palette swatches with add/remove, then the chosen color's hue, saturation and brightness with a lock) and a **Behavior** box (order, spread, blend, hold). Then a **Layered effects** section (owner request, Oct 23, 2026): a header with **+**, which opens a dialog listing Brightness shift, Flashes and Spin with icon and description; picking one adds it with default settings at the bottom of the list and opens it in a **full-screen layer editor** that slides over the scene editor (title: the effect; subtitle: scene › group; back closes it, returning exactly where you were; a bin removes the layer after confirming). Below the header each layer is an outlined card: drag handle, icon, name, swatch (Flashes and Spin: their color; Brightness shift: none, owner decision) and ✕ (removes after confirming). Tap a card to edit it; drag to set priority (top wins).
 - A group that's off shows its effects disabled (kept, but not editable until it's on).
 - With **live preview** on, changing any effect setting runs that group's effects live on its bulbs; turning live preview off stops them and leaves the base.
 - **Opening the editor activates the scene** (owner decision, replacing "opening the editor doesn't touch the bulbs"): whatever was playing stops, the scene becomes the active scene and is shown in full, effects included. Closing the editor leaves it playing.
